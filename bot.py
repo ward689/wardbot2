@@ -6,6 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import BOT_TOKEN, ADMIN_IDS, ADMIN_LEVELS, LOG_CHANNEL_ID, VIOLENCE_WORDS, BAD_WORDS
 from database import *
+from aiohttp import web
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -54,9 +55,9 @@ async def send_log(channel_id: int, action: str, details: str):
     except:
         pass
 
-# === КНОПКИ (ИСПРАВЛЕНО - ДОБАВЛЕН AWAIT) ===
+# === КНОПКИ ===
 async def get_admin_keyboard(user_id: int):
-    level = await get_user_level(user_id)  # <-- ДОБАВЛЕН AWAIT!
+    level = await get_user_level(user_id)
     
     buttons = []
     
@@ -186,7 +187,7 @@ async def setup_operator_cmd(msg: types.Message):
     m = await msg.answer(text, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 60))
 
-# === ADMIN (ИСПРАВЛЕНО!) ===
+# === ADMIN ===
 @dp.message(Command("admin"))
 async def admin_panel(msg: types.Message):
     user_id = msg.from_user.id
@@ -198,9 +199,7 @@ async def admin_panel(msg: types.Message):
         return
     
     role = await get_user_role(user_id)
-    
-    # Ждём результат async функции
-    keyboard = await get_admin_keyboard(user_id)  # <-- ДОБАВЛЕН AWAIT!
+    keyboard = await get_admin_keyboard(user_id)
     
     m = await msg.answer(
         f"🛡️ *Админ-панель*\n\n"
@@ -229,7 +228,6 @@ async def buttons(call: types.CallbackQuery):
     
     action = call.data
     
-    # Проверка прав
     if action == "warn" and level < 2:
         await call.answer("⛔ Нужен уровень 2+!", True)
         return
@@ -635,6 +633,20 @@ async def filter_msg(msg: types.Message):
         asyncio.create_task(delete_after(m1, 10))
         asyncio.create_task(delete_after(m2, 10))
 
+# === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
+async def health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 10000)
+    await site.start()
+    print("✅ Веб-сервер запущен на порту 10000")
+    await asyncio.Event().wait()
+
 # === ЗАПУСК ===
 async def main():
     print("🚀 Запуск бота с мультиканальной системой...")
@@ -647,4 +659,6 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
+    loop.run_until_complete(start_web())
