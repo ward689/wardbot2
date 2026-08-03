@@ -45,8 +45,6 @@ async def init_db():
             )
         """)
         
-        # === НОВЫЕ ТАБЛИЦЫ ===
-        
         # Daily бонусы
         await db.execute("""
             CREATE TABLE IF NOT EXISTS daily_bonus (
@@ -123,12 +121,92 @@ async def init_db():
                 pass
         await db.commit()
 
-# === ВСЕ СТАРЫЕ ФУНКЦИИ (варны, муты, роли) ===
-# ... (оставляем как было)
+# === ВАРНЫ ===
+async def add_warning(user_id, chat_id, reason):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO warnings (user_id, chat_id, reason) VALUES (?, ?, ?)", (user_id, chat_id, reason))
+        await db.commit()
+
+async def get_warnings(user_id, chat_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        result = await cursor.fetchone()
+        return result[0] if result else 0
+
+async def clear_warnings(user_id, chat_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM warnings WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        await db.commit()
+
+# === МУТЫ ===
+async def add_mute(user_id, duration):
+    until = int(time.time()) + duration
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT OR REPLACE INTO mutes (user_id, until) VALUES (?, ?)", (user_id, until))
+        await db.commit()
+
+async def remove_mute(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM mutes WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+async def is_muted(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT until FROM mutes WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        if result and result[0] > time.time():
+            return True
+        return False
+
+# === РОЛИ ===
+async def set_user_level(user_id: int, level: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO roles (user_id, level, role) VALUES (?, ?, ?)",
+            (user_id, level, f"admin_{level}" if level > 0 else "user")
+        )
+        await db.commit()
+
+async def get_user_level(user_id: int) -> int:
+    if user_id in ADMIN_IDS:
+        return 7
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT level FROM roles WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        return result[0] if result else 0
+
+async def get_user_role(user_id: int) -> str:
+    level = await get_user_level(user_id)
+    if level == 0:
+        return "👤 Пользователь"
+    from config import ADMIN_LEVELS
+    if level in ADMIN_LEVELS:
+        return f"{ADMIN_LEVELS[level]['emoji']} {ADMIN_LEVELS[level]['name']}"
+    return "👤 Пользователь"
+
+async def has_permission(user_id: int, permission: str) -> bool:
+    level = await get_user_level(user_id)
+    from config import ADMIN_LEVELS
+    if level == 0:
+        return False
+    if level in ADMIN_LEVELS:
+        perms = ADMIN_LEVELS[level]["permissions"]
+        if "all" in perms:
+            return True
+        return permission in perms
+    return False
+
+async def is_moderator(user_id: int) -> bool:
+    level = await get_user_level(user_id)
+    return level >= 2
+
+async def is_admin(user_id: int) -> bool:
+    level = await get_user_level(user_id)
+    return level >= 6
 
 # === DAILY BONUS ===
 async def get_daily_bonus(user_id: int) -> tuple:
-    """Возвращает (можно ли получить, сколько, стрик)"
+    """Возвращает (можно ли получить, сколько, стрик)"""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
         result = await cursor.fetchone()
@@ -291,7 +369,7 @@ async def get_channel_owner(channel_id: int) -> dict:
             return {"owner_id": result[0], "owner_username": result[1]}
         return None
 
-# === ОПЕРАТОРЫ КАНАЛОВ (улучшенные) ===
+# === ОПЕРАТОРЫ КАНАЛОВ ===
 async def set_channel_operator(channel_id: int, operator_id: int, operator_username: str = "", channel_name: str = ""):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
