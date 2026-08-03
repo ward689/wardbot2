@@ -6,7 +6,18 @@ DB_NAME = "bot.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
-        # Варны
+        # Проверяем, есть ли колонка level в таблице roles
+        cursor = await db.execute("PRAGMA table_info(roles)")
+        columns = await cursor.fetchall()
+        has_level = any(col[1] == 'level' for col in columns)
+        
+        if not has_level:
+            # Удаляем старую таблицу
+            await db.execute("DROP TABLE IF EXISTS roles")
+            await db.commit()
+            print("✅ Старая таблица roles удалена (не было колонки level)")
+        
+        # Таблица варнов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS warnings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -17,7 +28,7 @@ async def init_db():
             )
         """)
         
-        # Муты
+        # Таблица мутов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS mutes (
                 user_id INTEGER PRIMARY KEY,
@@ -25,7 +36,7 @@ async def init_db():
             )
         """)
         
-        # Роли
+        # Таблица ролей (с колонкой level)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS roles (
                 user_id INTEGER PRIMARY KEY,
@@ -34,7 +45,7 @@ async def init_db():
             )
         """)
         
-        # Операторы каналов
+        # Таблица операторов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS channel_operators (
                 channel_id INTEGER PRIMARY KEY,
@@ -54,7 +65,7 @@ async def init_db():
             )
         """)
         
-        # Карма/рейтинг
+        # Карма
         await db.execute("""
             CREATE TABLE IF NOT EXISTS karma (
                 user_id INTEGER PRIMARY KEY,
@@ -89,7 +100,7 @@ async def init_db():
             )
         """)
         
-        # Белый список ссылок
+        # Белый список
         await db.execute("""
             CREATE TABLE IF NOT EXISTS whitelist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +110,7 @@ async def init_db():
             )
         """)
         
-        # Главы каналов (owner)
+        # Главы каналов
         await db.execute("""
             CREATE TABLE IF NOT EXISTS channel_owners (
                 channel_id INTEGER PRIMARY KEY,
@@ -111,7 +122,7 @@ async def init_db():
         
         await db.commit()
     
-    # Добавляем дефолтные домены в белый список
+    # Добавляем дефолтные домены
     from config import WHITELIST_DOMAINS
     async with aiosqlite.connect(DB_NAME) as db:
         for domain in WHITELIST_DOMAINS:
@@ -120,8 +131,10 @@ async def init_db():
             except:
                 pass
         await db.commit()
+    
+    print("✅ База данных инициализирована")
 
-# === ВАРНЫ ===
+# === ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ===
 async def add_warning(user_id, chat_id, reason):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO warnings (user_id, chat_id, reason) VALUES (?, ?, ?)", (user_id, chat_id, reason))
@@ -138,7 +151,6 @@ async def clear_warnings(user_id, chat_id):
         await db.execute("DELETE FROM warnings WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
         await db.commit()
 
-# === МУТЫ ===
 async def add_mute(user_id, duration):
     until = int(time.time()) + duration
     async with aiosqlite.connect(DB_NAME) as db:
@@ -158,7 +170,6 @@ async def is_muted(user_id):
             return True
         return False
 
-# === РОЛИ ===
 async def set_user_level(user_id: int, level: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
@@ -206,17 +217,13 @@ async def is_admin(user_id: int) -> bool:
 
 # === DAILY BONUS ===
 async def get_daily_bonus(user_id: int) -> tuple:
-    """Возвращает (можно ли получить, сколько, стрик)"""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
         result = await cursor.fetchone()
-        
         now = int(time.time())
         day = 86400
-        
         if not result:
             return True, 100, 1
-        
         last_claim, streak = result
         if now - last_claim >= day:
             return True, 100 + (streak * 10), streak + 1
@@ -251,7 +258,7 @@ async def get_karma(user_id: int) -> int:
         result = await cursor.fetchone()
         return result[0] if result else 0
 
-# === СТАТИСТИКА НАРУШЕНИЙ ===
+# === СТАТИСТИКА ===
 async def add_violation(user_id: int, chat_id: int, type: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
@@ -309,12 +316,10 @@ async def vote_poll(poll_id: int, user_id: int, option_index: int):
             return False
         votes = json.loads(result[0])
         options = json.loads(result[1])
-        
         if str(user_id) in votes:
             return False
         if option_index < 0 or option_index >= len(options):
             return False
-        
         votes[str(user_id)] = option_index
         await db.execute(
             "UPDATE polls SET votes = ? WHERE id = ?",
@@ -328,7 +333,7 @@ async def close_poll(poll_id: int):
         await db.execute("UPDATE polls SET is_active = 0 WHERE id = ?", (poll_id,))
         await db.commit()
 
-# === БЕЛЫЙ СПИСОК ССЫЛОК ===
+# === БЕЛЫЙ СПИСОК ===
 async def add_whitelist_domain(domain: str, added_by: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, added_by))
@@ -349,7 +354,7 @@ async def is_domain_whitelisted(domain: str) -> bool:
         cursor = await db.execute("SELECT 1 FROM whitelist WHERE domain = ?", (domain,))
         return await cursor.fetchone() is not None
 
-# === ГЛАВЫ КАНАЛОВ (OWNER) ===
+# === ГЛАВЫ КАНАЛОВ ===
 async def set_channel_owner(channel_id: int, owner_id: int, owner_username: str = ""):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
@@ -369,7 +374,7 @@ async def get_channel_owner(channel_id: int) -> dict:
             return {"owner_id": result[0], "owner_username": result[1]}
         return None
 
-# === ОПЕРАТОРЫ КАНАЛОВ ===
+# === ОПЕРАТОРЫ ===
 async def set_channel_operator(channel_id: int, operator_id: int, operator_username: str = "", channel_name: str = ""):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
