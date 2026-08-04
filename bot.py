@@ -196,33 +196,24 @@ async def get_admin_keyboard(user_id: int):
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     m = await msg.answer(
-        "☀️ *Добро пожаловать!*\n"
-        "━" * 25 + "\n\n"
-        "✨ Я слежу за порядком в чатах и каналах.\n"
-        "🚫 Защищаю от угроз и агрессии.\n"
-        "📊 Помогаю админам управлять сообществами.\n\n"
+        "☀️ *Бот-модератор*\n"
+        "━" * 15 + "\n\n"
+        "✅ Мат разрешён\n"
+        "🚫 Угрозы блокируются\n"
+        "⚠️ 3 варна = мут 5 мин\n\n"
         "📌 *Команды:*\n"
-        "👑 `/admin` — панель управления\n"
-        "👤 `/myrole` — узнать свою роль\n"
-        "📊 `/admins` — список админов\n"
-        "📢 `/setup_operator` — настроить оператора\n"
-        "👑 `/set_owner` — назначить главу канала\n"
-        "🎁 `/daily` — получить бонус\n"
-        "📊 `/stats` — статистика чата\n"
-        "⚙️ `/settings` — настройки канала\n\n"
-        "📌 *Текстовые команды:*\n"
+        "👑 /admin — панель\n"
+        "👤 /myrole — роль\n"
+        "🎁 /daily — бонус\n"
         "/мут @user 24ч причина\n"
         "/размут @user\n"
         "/варн @user причина\n"
         "/бан @user причина\n"
         "/кик @user причина\n"
-        "/очистить @user\n"
-        "/инфо @user\n\n"
-        "━" * 25 + "\n"
-        "🌴 *Приятного общения!*",
+        "/инфо @user",
         parse_mode="Markdown"
     )
-    asyncio.create_task(delete_after(m, 60))
+    asyncio.create_task(delete_after(m, 30))
 
 # === DAILY ===
 @dp.message(Command("daily"))
