@@ -196,8 +196,7 @@ async def get_admin_keyboard(user_id: int):
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     m = await msg.answer(
-        "☀️ *Бот-модератор*\n"
-        "━" * 15 + "\n\n"
+        "☀️ *Бот-модератор*\n\n"
         "✅ Мат разрешён\n"
         "🚫 Угрозы блокируются\n"
         "⚠️ 3 варна = мут 5 мин\n\n"
