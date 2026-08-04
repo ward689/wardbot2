@@ -1,8 +1,7 @@
-BOT_TOKEN = "8637976880:AAGfkjVn_JqrWkv2SIKayMSyYgBDomRuV9Q"
+BOT_TOKEN = "8637976880:AAG7wFS1qopEabIQ8XtPrRlaYFO1A_XSRuI"
 ADMIN_IDS = [7823802800]
 LOG_CHANNEL_ID = -1004329400139
 
-# === БЕЛЫЙ СПИСОК ССЫЛОК ===
 WHITELIST_DOMAINS = [
     "youtube.com", "youtu.be", "t.me", "telegram.org",
     "google.com", "gmail.com", "drive.google.com",
@@ -14,7 +13,6 @@ WHITELIST_DOMAINS = [
     "medium.com",
 ]
 
-# === УРОВНИ АДМИНОК ===
 ADMIN_LEVELS = {
     1: {"name": "Наблюдатель", "emoji": "🟢"},
     2: {"name": "Стажёр", "emoji": "🟡"},
@@ -25,7 +23,6 @@ ADMIN_LEVELS = {
     7: {"name": "Главный администратор", "emoji": "⭐"},
 }
 
-# === 1000+ ЗАПРЕЩЁННЫХ СЛОВ ===
 VIOLENCE_WORDS = [
     "убью", "убьёт", "убьем", "убьют", "убить", "убил",
     "убила", "убили", "убивал", "убивала", "убивать",
@@ -187,7 +184,6 @@ VIOLENCE_WORDS = [
     "наняла", "наняли",
 ]
 
-# === МАТ (ПРОПУСКАЕТ, НО С ФОТО УДАЛЯЕТ) ===
 BAD_WORDS = [
     "хуй", "хуя", "хуе", "хуё", "хуем", "хуёв",
     "пизда", "пизде", "пизду", "пиздой", "пиздец",
