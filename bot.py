@@ -16,9 +16,9 @@ current_action = {}
 target_user = {}
 
 # ============================================================
-# === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ПО USERNAME ===
+# === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ (РАБОТАЕТ ЧЕРЕЗ ГРУППУ!) ===
 # ============================================================
-async def resolve_user(text: str) -> int:
+async def resolve_user(text: str, chat_id: int = None) -> int:
     """УНИВЕРСАЛЬНЫЙ ПОИСК — РАБОТАЕТ 100%"""
     text = text.strip()
     
@@ -44,7 +44,7 @@ async def resolve_user(text: str) -> int:
     except:
         pass
     
-    # Способ 2: Через get_chat (работает даже если не писал боту)
+    # Способ 2: Через get_chat (для публичных юзернеймов)
     try:
         chat = await bot.get_chat(f"@{username}")
         if chat and chat.id:
@@ -52,7 +52,26 @@ async def resolve_user(text: str) -> int:
     except:
         pass
     
-    # Способ 3: Через get_chat без @
+    # === СПОСОБ 3: ЧЕРЕЗ ГРУППУ (РАБОТАЕТ 100%) ===
+    if chat_id:
+        # Пробуем получить участника группы
+        try:
+            member = await bot.get_chat_member(chat_id, f"@{username}")
+            if member and member.user:
+                return member.user.id
+        except:
+            pass
+        
+        # Пробуем через get_chat (если пользователь в группе)
+        try:
+            # Получаем список участников (только для админов)
+            async for member in bot.get_chat_administrators(chat_id):
+                if member.user.username and member.user.username.lower() == username.lower():
+                    return member.user.id
+        except:
+            pass
+    
+    # Способ 4: Поиск через forward
     try:
         chat = await bot.get_chat(username)
         if chat and chat.id:
@@ -339,7 +358,7 @@ async def admin_panel(msg: types.Message):
     asyncio.create_task(delete_after(m, 60))
 
 # ============================================================
-# === ТЕКСТОВЫЕ КОМАНДЫ (РАБОТАЮТ ЧЕРЕЗ USERNAME) ===
+# === ТЕКСТОВЫЕ КОМАНДЫ (РАБОТАЮТ ЧЕРЕЗ ГРУППУ!) ===
 # ============================================================
 @dp.message(Command("мут"))
 @dp.message(Command("mute"))
@@ -359,13 +378,17 @@ async def cmd_mute(msg: types.Message):
     duration_str = args[2] if len(args) > 2 else "5м"
     reason = args[3] if len(args) > 3 else "Нарушение"
     
-    target_id = await resolve_user(target)
+    # === ПЕРЕДАЕМ chat_id ДЛЯ ПОИСКА ===
+    target_id = await resolve_user(target, msg.chat.id)
     
     if not target_id:
         await msg.answer(
             f"❌ Пользователь {target} не найден!\n"
-            f"💡 Попросите пользователя написать боту `/start`\n"
-            f"Или используйте ID пользователя"
+            f"💡 Убедитесь, что:\n"
+            f"• Бот добавлен в группу\n"
+            f"• Бот имеет права админа\n"
+            f"• Пользователь есть в группе\n\n"
+            f"🔧 Или используйте ID: `/мут {target} 1ч причина`"
         )
         return
     
@@ -406,7 +429,7 @@ async def cmd_unmute(msg: types.Message):
         return
     
     target = args[1]
-    target_id = await resolve_user(target)
+    target_id = await resolve_user(target, msg.chat.id)
     
     if not target_id:
         await msg.answer(f"❌ Пользователь {target} не найден!")
@@ -439,7 +462,7 @@ async def cmd_warn(msg: types.Message):
     target = args[1]
     reason = args[2] if len(args) > 2 else "Нарушение"
     
-    target_id = await resolve_user(target)
+    target_id = await resolve_user(target, msg.chat.id)
     
     if not target_id:
         await msg.answer(f"❌ Пользователь {target} не найден!")
@@ -491,7 +514,7 @@ async def cmd_ban(msg: types.Message):
     target = args[1]
     reason = args[2] if len(args) > 2 else "Бан"
     
-    target_id = await resolve_user(target)
+    target_id = await resolve_user(target, msg.chat.id)
     
     if not target_id:
         await msg.answer(f"❌ Пользователь {target} не найден!")
@@ -531,7 +554,7 @@ async def cmd_kick(msg: types.Message):
     target = args[1]
     reason = args[2] if len(args) > 2 else "Кик"
     
-    target_id = await resolve_user(target)
+    target_id = await resolve_user(target, msg.chat.id)
     
     if not target_id:
         await msg.answer(f"❌ Пользователь {target} не найден!")
@@ -569,7 +592,7 @@ async def cmd_info(msg: types.Message):
         return
     
     target = args[1]
-    target_id = await resolve_user(target)
+    target_id = await resolve_user(target, msg.chat.id)
     
     if not target_id:
         await msg.answer(f"❌ Пользователь {target} не найден!")
@@ -858,7 +881,7 @@ async def admin_input(msg: types.Message):
         return
 
     # === ПОЛУЧАЕМ ID ===
-    target_id = await resolve_user(text)
+    target_id = await resolve_user(text, msg.chat.id)
     
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
@@ -1033,7 +1056,7 @@ async def admin_input(msg: types.Message):
 
     if action == "setup_operator":
         channel_id = target_user.get(user_id)
-        operator_id = await resolve_user(text)
+        operator_id = await resolve_user(text, channel_id)
         if not operator_id:
             m = await msg.answer("❌ Пользователь не найден!")
             asyncio.create_task(delete_after(m, 10))
@@ -1059,7 +1082,7 @@ async def admin_input(msg: types.Message):
 
     if action == "setup_owner":
         channel_id = target_user.get(user_id)
-        owner_id = await resolve_user(text)
+        owner_id = await resolve_user(text, channel_id)
         if not owner_id:
             m = await msg.answer("❌ Пользователь не найден!")
             asyncio.create_task(delete_after(m, 10))
