@@ -129,7 +129,6 @@ async def init_db():
                 pass
         await db.commit()
 
-# === ВАРНЫ ===
 async def add_warning(user_id, chat_id, reason, admin_id=0):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO warnings (user_id, chat_id, reason, admin_id) VALUES (?, ?, ?, ?)", (user_id, chat_id, reason, admin_id))
@@ -159,7 +158,6 @@ async def get_user_warnings_details(user_id, chat_id):
         cursor = await db.execute("SELECT reason, admin_id, date FROM warnings WHERE user_id = ? AND chat_id = ? ORDER BY date DESC", (user_id, chat_id))
         return await cursor.fetchall()
 
-# === МУТЫ ===
 async def add_mute(user_id, duration):
     until = int(time.time()) + duration
     async with aiosqlite.connect(DB_NAME) as db:
@@ -185,7 +183,6 @@ async def get_mute_until(user_id):
         result = await cursor.fetchone()
         return result[0] if result else 0
 
-# === РОЛИ ===
 async def set_user_level(user_id: int, level: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO roles (user_id, level, role) VALUES (?, ?, ?)", (user_id, level, f"admin_{level}" if level > 0 else "user"))
@@ -214,13 +211,8 @@ async def is_moderator(user_id: int) -> bool:
 async def is_admin(user_id: int) -> bool:
     return await get_user_level(user_id) >= 6
 
-# === НОВАЯ СИСТЕМА ЛОГОВ (С USERNAME) ===
 async def get_username_by_id_safe(user_id: int) -> str:
-    """Безопасное получение username, если не получается — возвращает ID"""
     try:
-        from aiogram import Bot
-        from config import BOT_TOKEN
-        bot = Bot(token=BOT_TOKEN)
         user = await bot.get_user(user_id)
         if user and user.username:
             return f"@{user.username}"
@@ -261,7 +253,6 @@ async def get_admin_logs_by_user(user_id: int, limit: int = 50):
         )
         return await cursor.fetchall()
 
-# === КАРМА ===
 async def add_karma(user_id: int, amount: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO karma (user_id, karma) VALUES (?, COALESCE((SELECT karma FROM karma WHERE user_id = ?), 0) + ?)", (user_id, user_id, amount))
@@ -273,7 +264,6 @@ async def get_karma(user_id: int) -> int:
         result = await cursor.fetchone()
         return result[0] if result else 0
 
-# === СТАТИСТИКА ===
 async def add_violation(user_id: int, chat_id: int, type: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO violations (user_id, chat_id, type) VALUES (?, ?, ?)", (user_id, chat_id, type))
@@ -313,7 +303,6 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
             "target_actions": target_actions
         }
 
-# === ДЕЙЛИ ===
 async def get_daily_bonus(user_id: int) -> tuple:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
@@ -338,7 +327,6 @@ async def claim_daily(user_id: int):
         await db.commit()
     return streak
 
-# === ОПЕРАТОРЫ ===
 async def set_channel_operator(channel_id: int, operator_id: int, operator_username: str = "", channel_name: str = ""):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO channel_operators (channel_id, operator_id, operator_username, channel_name) VALUES (?, ?, ?, ?)", (channel_id, operator_id, operator_username, channel_name))
@@ -362,7 +350,6 @@ async def get_all_channel_operators() -> list:
         cursor = await db.execute("SELECT channel_id, operator_id, operator_username, channel_name FROM channel_operators")
         return await cursor.fetchall()
 
-# === ВЛАДЕЛЬЦЫ ===
 async def set_channel_owner(channel_id: int, owner_id: int, owner_username: str = ""):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO channel_owners (channel_id, owner_id, owner_username) VALUES (?, ?, ?)", (channel_id, owner_id, owner_username))
@@ -376,7 +363,6 @@ async def get_channel_owner(channel_id: int) -> dict:
             return {"owner_id": result[0], "owner_username": result[1]}
         return None
 
-# === БЕЛЫЙ СПИСОК ===
 async def add_whitelist_domain(domain: str, added_by: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, added_by))
@@ -397,7 +383,6 @@ async def is_domain_whitelisted(domain: str) -> bool:
         cursor = await db.execute("SELECT 1 FROM whitelist WHERE domain = ?", (domain,))
         return await cursor.fetchone() is not None
 
-# === НАСТРОЙКИ ===
 async def get_channel_settings(channel_id: int) -> dict:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT enabled, mute_duration, warn_limit, block_new_accounts, min_account_age, log_enabled FROM channel_settings WHERE channel_id = ?", (channel_id,))
