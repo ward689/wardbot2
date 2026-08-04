@@ -217,6 +217,115 @@ async def get_admin_keyboard(user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
+# === КОМАНДА /id (РАБОТАЕТ 100%) ===
+# ============================================================
+@dp.message(Command("id"))
+async def get_user_id(msg: types.Message):
+    """УЛЬТИМАТИВНЫЙ СПОСОБ УЗНАТЬ ID — РАБОТАЕТ 100%"""
+    args = msg.text.split()
+    
+    # СПОСОБ 1: /id @username
+    if len(args) >= 2:
+        target = args[1]
+        target_id = await resolve_user(target, msg.chat.id)
+        if target_id:
+            username = await get_username_by_id(target_id)
+            await msg.answer(
+                f"👤 **Пользователь найден!**\n\n"
+                f"📌 Юзернейм: {username}\n"
+                f"🆔 ID: `{target_id}`\n"
+                f"🔗 Ссылка: [Перейти](tg://user?id={target_id})",
+                parse_mode="Markdown"
+            )
+            return
+        
+        await msg.answer(
+            f"❌ Пользователь {target} не найден!\n\n"
+            f"💡 **Попробуйте другие способы:**\n\n"
+            f"1️⃣ Ответьте на его сообщение командой `/id`\n"
+            f"2️⃣ Перешлите его сообщение сюда и напишите `/id`\n"
+            f"3️⃣ Попросите его написать боту `/start`\n"
+            f"4️⃣ Используйте @userinfobot",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # СПОСОБ 2: Ответ на сообщение
+    if msg.reply_to_message:
+        user = msg.reply_to_message.from_user
+        if user:
+            username = await get_username_by_id(user.id)
+            first_name = user.first_name or ""
+            last_name = user.last_name or ""
+            full_name = f"{first_name} {last_name}".strip()
+            
+            await msg.answer(
+                f"👤 **Информация о пользователе**\n\n"
+                f"📌 Имя: {full_name}\n"
+                f"📌 Юзернейм: {username}\n"
+                f"🆔 ID: `{user.id}`\n"
+                f"🔗 Ссылка: [Перейти](tg://user?id={user.id})",
+                parse_mode="Markdown"
+            )
+            return
+    
+    # СПОСОБ 3: Пересылка
+    if msg.forward_from:
+        user = msg.forward_from
+        username = await get_username_by_id(user.id)
+        first_name = user.first_name or ""
+        last_name = user.last_name or ""
+        full_name = f"{first_name} {last_name}".strip()
+        
+        await msg.answer(
+            f"👤 **Информация о пользователе**\n\n"
+            f"📌 Имя: {full_name}\n"
+            f"📌 Юзернейм: {username}\n"
+            f"🆔 ID: `{user.id}`\n"
+            f"🔗 Ссылка: [Перейти](tg://user?id={user.id})",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # СПОСОБ 4: Инструкция
+    await msg.answer(
+        "📝 **Как узнать ID пользователя:**\n\n"
+        "1️⃣ **Через юзернейм:**\n"
+        "   `/id @username`\n\n"
+        "2️⃣ **Через ответ на сообщение:**\n"
+        "   Ответьте на сообщение пользователя и напишите `/id`\n\n"
+        "3️⃣ **Через пересылку:**\n"
+        "   Перешлите сообщение пользователя сюда и напишите `/id`\n\n"
+        "4️⃣ **Через @userinfobot:**\n"
+        "   Перешлите сообщение @userinfobot\n\n"
+        "🌟 **Самый надёжный способ:**\n"
+        "   Ответьте на сообщение командой `/id`",
+        parse_mode="Markdown"
+    )
+
+# ============================================================
+# === АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ ID ПРИ ПЕРЕСЫЛКЕ ===
+# ============================================================
+@dp.message(F.forward_from)
+async def forward_id(msg: types.Message):
+    """Автоматически показывает ID при пересылке"""
+    if msg.forward_from:
+        user = msg.forward_from
+        username = await get_username_by_id(user.id)
+        first_name = user.first_name or ""
+        last_name = user.last_name or ""
+        full_name = f"{first_name} {last_name}".strip()
+        
+        await msg.answer(
+            f"👤 **Пересланное сообщение!**\n\n"
+            f"📌 Имя: {full_name}\n"
+            f"📌 Юзернейм: {username}\n"
+            f"🆔 ID: `{user.id}`\n"
+            f"🔗 Ссылка: [Перейти](tg://user?id={user.id})",
+            parse_mode="Markdown"
+        )
+
+# ============================================================
 # === КОМАНДЫ ===
 # ============================================================
 @dp.message(Command("start"))
@@ -240,22 +349,6 @@ async def start(msg: types.Message):
         parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(m, 30))
-
-@dp.message(Command("id"))
-async def get_user_id(msg: types.Message):
-    args = msg.text.split()
-    if len(args) < 2:
-        await msg.answer("📝 Использование: /id @username")
-        return
-    
-    target = args[1]
-    target_id = await resolve_user(target, msg.chat.id)
-    
-    if target_id:
-        username = await get_username_by_id(target_id)
-        await msg.answer(f"👤 {username}\n🆔 ID: `{target_id}`", parse_mode="Markdown")
-    else:
-        await msg.answer(f"❌ Пользователь {target} не найден!\n💡 Используйте @userinfobot")
 
 @dp.message(Command("daily"))
 async def daily_bonus(msg: types.Message):
@@ -476,7 +569,7 @@ async def cmd_unmute(msg: types.Message):
     await send_log(
         msg.chat.id,
         "🔓 Размут",
-        f"Пользователь: {target_name} ({target_id})\n"
+        f"Пользователь: {target_name} ({target_id})"
     )
     
     await msg.answer(
