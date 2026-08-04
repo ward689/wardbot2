@@ -16,46 +16,37 @@ current_action = {}
 target_user = {}
 
 # ============================================================
-# === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ (РАБОТАЕТ 100%) ===
+# === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ===
 # ============================================================
 async def get_user_by_username(username: str) -> types.User:
-    """УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ПО USERNAME"""
     try:
         username = username.replace('@', '').strip()
         if not username:
             return None
-        
-        # === СПОСОБ 1: Через bot.get_user (если бот в контакте) ===
         try:
             user = await bot.get_user(username)
             if user:
                 return user
         except:
             pass
-        
-        # === СПОСОБ 2: Через bot.get_chat (для публичных юзернеймов) ===
         try:
             chat = await bot.get_chat(f"@{username}")
             if chat and chat.type == "private":
                 return types.User(id=chat.id, first_name=chat.first_name, username=chat.username)
         except:
             pass
-        
-        # === СПОСОБ 3: Прямой поиск через get_chat ===
         try:
             chat = await bot.get_chat(username)
             if chat:
                 return types.User(id=chat.id, first_name=chat.first_name, username=chat.username)
         except:
             pass
-        
         return None
     except Exception as e:
         print(f"Ошибка поиска {username}: {e}")
         return None
 
 async def get_user_id_by_username(username: str) -> int:
-    """Получает ID пользователя по username"""
     try:
         user = await get_user_by_username(username)
         if user:
@@ -71,28 +62,21 @@ async def get_user_id_by_username(username: str) -> int:
         return None
 
 async def resolve_user(text: str) -> int:
-    """Универсально получает ID из username или числа"""
     text = text.strip()
-    
-    # Если это число — возвращаем как ID
     try:
         return int(text)
     except:
         pass
-    
-    # Если это username
     if text.startswith("@"):
         user_id = await get_user_id_by_username(text)
         if user_id:
             return user_id
-        # Пробуем через get_chat
         try:
             chat = await bot.get_chat(text)
             if chat and chat.type == "private":
                 return chat.id
         except:
             pass
-    
     return None
 
 async def get_username_by_id(user_id: int) -> str:
@@ -184,7 +168,7 @@ async def send_log(channel_id: int, action: str, details: str):
         pass
 
 # ============================================================
-# === КНОПКИ ДЛЯ АДМИН-ПАНЕЛИ ===
+# === КНОПКИ ===
 # ============================================================
 async def get_admin_keyboard(user_id: int):
     level = await get_user_level(user_id)
@@ -193,7 +177,7 @@ async def get_admin_keyboard(user_id: int):
         buttons.append([InlineKeyboardButton(text="⚠️ Варн", callback_data="admin_warn")])
         buttons.append([InlineKeyboardButton(text="📋 Варны пользователя", callback_data="admin_check_warns")])
     if level >= 3:
-        buttons.append([InlineKeyboardButton(text="🔨 Мут", callback_data="admin_mute")])
+        buttons.append([InlineKeyboardButton(text="🔒 Мут", callback_data="admin_mute")])
         buttons.append([InlineKeyboardButton(text="🔕 Тихий мут", callback_data="admin_silent_mute")])
         buttons.append([InlineKeyboardButton(text="🔓 Размут", callback_data="admin_unmute")])
     if level >= 4:
@@ -338,26 +322,11 @@ async def channel_settings(msg: types.Message):
     settings = await get_channel_settings(chat_id)
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"{'✅' if settings['enabled'] else '❌'} Модерация",
-            callback_data="sett_enabled"
-        )],
-        [InlineKeyboardButton(
-            text=f"⏱️ Длительность мута: {settings['mute_duration']}с",
-            callback_data="sett_mute_duration"
-        )],
-        [InlineKeyboardButton(
-            text=f"⚠️ Лимит варнов: {settings['warn_limit']}",
-            callback_data="sett_warn_limit"
-        )],
-        [InlineKeyboardButton(
-            text=f"{'✅' if settings['block_new_accounts'] else '❌'} Блокировка новых",
-            callback_data="sett_block_new"
-        )],
-        [InlineKeyboardButton(
-            text=f"📊 Показать настройки",
-            callback_data="sett_show"
-        )]
+        [InlineKeyboardButton(text=f"{'✅' if settings['enabled'] else '❌'} Модерация", callback_data="sett_enabled")],
+        [InlineKeyboardButton(text=f"⏱️ Длительность мута: {settings['mute_duration']}с", callback_data="sett_mute_duration")],
+        [InlineKeyboardButton(text=f"⚠️ Лимит варнов: {settings['warn_limit']}", callback_data="sett_warn_limit")],
+        [InlineKeyboardButton(text=f"{'✅' if settings['block_new_accounts'] else '❌'} Блокировка новых", callback_data="sett_block_new")],
+        [InlineKeyboardButton(text="📊 Показать настройки", callback_data="sett_show")]
     ])
     
     m = await msg.answer("⚙️ **Настройки канала**", reply_markup=keyboard, parse_mode="Markdown")
@@ -427,7 +396,7 @@ async def set_owner_cmd(msg: types.Message):
     asyncio.create_task(delete_after(m, 30))
 
 # ============================================================
-# === ТЕКСТОВЫЕ КОМАНДЫ ДЛЯ АДМИНОВ (ИСПРАВЛЕНЫ) ===
+# === ТЕКСТОВЫЕ КОМАНДЫ С КРАСИВЫМ ОФОРМЛЕНИЕМ ===
 # ============================================================
 @dp.message(Command("мут"))
 @dp.message(Command("mute"))
@@ -452,14 +421,8 @@ async def cmd_mute(msg: types.Message):
     if not target_id:
         await msg.answer(
             f"❌ Пользователь {target} не найден!\n"
-            f"💡 **Почему:**\n"
-            f"• Пользователь никогда не писал боту\n"
-            f"• Бот не добавлен в общий чат с ним\n"
-            f"• У пользователя скрыт username\n\n"
-            f"🔧 **Решение:**\n"
-            f"• Попросите пользователя написать боту `/start`\n"
-            f"• Добавьте бота в общий чат с пользователем\n"
-            f"• Используйте ID пользователя: `{target}`"
+            f"💡 Попросите пользователя написать боту `/start`\n"
+            f"Или используйте ID пользователя"
         )
         return
     
@@ -474,9 +437,16 @@ async def cmd_mute(msg: types.Message):
         return
     
     await add_mute(target_id, duration)
-    await log_admin_action(user_id, "mute", target_id, reason)
-    await send_log(msg.chat.id, "🔨 Мут", f"Пользователь: {target}\nДлительность: {duration_str}\nПричина: {reason}")
-    await msg.answer(f"🔨 Мут: {target}\n⏱️ {duration_str}\n📝 {reason}")
+    await log_admin_action(user_id, "🔒 Мут", target_id, f"{duration_str} - {reason}")
+    await send_log(msg.chat.id, "🔒 Мут", f"Пользователь: {target}\nДлительность: {duration_str}\nПричина: {reason}")
+    
+    await msg.answer(
+        f"🔒 **Мут выдан!**\n\n"
+        f"👤 Пользователь: {target}\n"
+        f"⏱️ Длительность: {duration_str}\n"
+        f"📝 Причина: {reason}\n"
+        f"👮 Админ: {await get_username_by_id(user_id)}"
+    )
 
 @dp.message(Command("размут"))
 @dp.message(Command("unmute"))
@@ -500,9 +470,14 @@ async def cmd_unmute(msg: types.Message):
         return
     
     await remove_mute(target_id)
-    await log_admin_action(user_id, "unmute", target_id, "")
+    await log_admin_action(user_id, "🔓 Размут", target_id, "")
     await send_log(msg.chat.id, "🔓 Размут", f"Пользователь: {target}")
-    await msg.answer(f"🔓 Размут: {target}")
+    
+    await msg.answer(
+        f"🔓 **Размут снят!**\n\n"
+        f"👤 Пользователь: {target}\n"
+        f"👮 Админ: {await get_username_by_id(user_id)}"
+    )
 
 @dp.message(Command("варн"))
 @dp.message(Command("warn"))
@@ -533,15 +508,28 @@ async def cmd_warn(msg: types.Message):
         return
     
     await add_warning(target_id, msg.chat.id, reason, user_id)
-    await log_admin_action(user_id, "warn", target_id, reason)
+    await log_admin_action(user_id, "⚠️ Варн", target_id, reason)
     await send_log(msg.chat.id, "⚠️ Варн", f"Пользователь: {target}\nПричина: {reason}")
+    
     warns = await get_warnings(target_id, msg.chat.id)
     settings = await get_channel_settings(msg.chat.id)
+    
     if warns >= settings['warn_limit']:
         await add_mute(target_id, settings['mute_duration'])
-        await msg.answer(f"⚠️ {warns} варнов! Мут {settings['mute_duration']//60} мин!")
+        await msg.answer(
+            f"⚠️ **Варн выдан!**\n\n"
+            f"👤 Пользователь: {target}\n"
+            f"📝 Причина: {reason}\n"
+            f"🔥 Варнов: {warns}/{settings['warn_limit']}\n"
+            f"⛔ **Автоматический мут {settings['mute_duration']//60} минут!**"
+        )
     else:
-        await msg.answer(f"⚠️ Варн {warns}/{settings['warn_limit']}")
+        await msg.answer(
+            f"⚠️ **Варн выдан!**\n\n"
+            f"👤 Пользователь: {target}\n"
+            f"📝 Причина: {reason}\n"
+            f"🔥 Варнов: {warns}/{settings['warn_limit']}"
+        )
 
 @dp.message(Command("бан"))
 @dp.message(Command("ban"))
@@ -572,9 +560,16 @@ async def cmd_ban(msg: types.Message):
         return
     
     await add_mute(target_id, 2592000)
-    await log_admin_action(user_id, "ban", target_id, reason)
+    await log_admin_action(user_id, "🚫 Бан", target_id, reason)
     await send_log(msg.chat.id, "🚫 Бан", f"Пользователь: {target}\nПричина: {reason}")
-    await msg.answer(f"🚫 Бан: {target}\n📝 {reason}\n⏱️ 30 дней")
+    
+    await msg.answer(
+        f"🚫 **Бан выдан!**\n\n"
+        f"👤 Пользователь: {target}\n"
+        f"📝 Причина: {reason}\n"
+        f"⏱️ Срок: 30 дней\n"
+        f"👮 Админ: {await get_username_by_id(user_id)}"
+    )
 
 @dp.message(Command("кик"))
 @dp.message(Command("kick"))
@@ -605,9 +600,16 @@ async def cmd_kick(msg: types.Message):
         return
     
     await add_mute(target_id, 3600)
-    await log_admin_action(user_id, "kick", target_id, reason)
+    await log_admin_action(user_id, "👢 Кик", target_id, reason)
     await send_log(msg.chat.id, "👢 Кик", f"Пользователь: {target}\nПричина: {reason}")
-    await msg.answer(f"👢 Кик: {target}\n📝 {reason}\n⏱️ 1 час")
+    
+    await msg.answer(
+        f"👢 **Кик выдан!**\n\n"
+        f"👤 Пользователь: {target}\n"
+        f"📝 Причина: {reason}\n"
+        f"⏱️ Срок: 1 час\n"
+        f"👮 Админ: {await get_username_by_id(user_id)}"
+    )
 
 @dp.message(Command("очистить"))
 @dp.message(Command("clear"))
@@ -631,9 +633,14 @@ async def cmd_clear(msg: types.Message):
         return
     
     await clear_warnings(target_id, msg.chat.id)
-    await log_admin_action(user_id, "clear_warns", target_id, "")
+    await log_admin_action(user_id, "🗑️ Очищены варны", target_id, "")
     await send_log(msg.chat.id, "🗑️ Очищены варны", f"Пользователь: {target}")
-    await msg.answer(f"🗑️ **Варны очищены!**\n\n👤 Пользователь: {target}")
+    
+    await msg.answer(
+        f"🗑️ **Варны очищены!**\n\n"
+        f"👤 Пользователь: {target}\n"
+        f"👮 Админ: {await get_username_by_id(user_id)}"
+    )
 
 @dp.message(Command("инфо"))
 @dp.message(Command("info"))
@@ -658,9 +665,10 @@ async def cmd_info(msg: types.Message):
     
     stats = await get_user_stats(target_id, msg.chat.id)
     username = await get_username_by_id(target_id)
+    
     report = (
         f"📊 **Информация о пользователе**\n"
-        f"━" * 25 + "\n"
+        f"━" * 30 + "\n"
         f"👤 Пользователь: {username}\n"
         f"🆔 ID: `{target_id}`\n\n"
         f"📌 **Общая информация:**\n"
@@ -678,12 +686,86 @@ async def cmd_info(msg: types.Message):
         report += f"🔴 **В муте:** {minutes}м {seconds}с\n"
     else:
         report += f"🟢 **Не в муте**\n"
-    report += "\n━" * 25 + "\n"
+    
+    report += f"\n📊 **Статистика действий:**\n"
+    report += f"• 👮 Действий как админ: {stats['admin_actions']}\n"
+    report += f"• 🎯 Попал под действия: {stats['target_actions']}\n"
+    report += "\n━" * 30 + "\n"
     report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-    await msg.answer(report, parse_mode="Markdown")
+    
+    # Кнопка "Показать фулл" (только для админов Telegram)
+    keyboard = None
+    if user_id in ADMIN_IDS:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Показать фулл", callback_data=f"full_stats_{target_id}")]
+        ])
+    
+    m = await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
+    asyncio.create_task(delete_after(m, 60))
 
 # ============================================================
-# === ОБРАБОТКА КНОПОК (CALLBACK) ===
+# === ОБРАБОТКА КНОПКИ "Показать фулл" ===
+# ============================================================
+@dp.callback_query(F.data.startswith("full_stats_"))
+async def full_stats_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    
+    # Проверяем, что админ
+    if user_id not in ADMIN_IDS:
+        await call.answer("⛔ Только главные админы!", True)
+        return
+    
+    target_id = int(call.data.split("_")[2])
+    stats = await get_user_stats(target_id, call.message.chat.id)
+    username = await get_username_by_id(target_id)
+    
+    # Получаем логи по пользователю
+    logs = await get_admin_logs_by_user(target_id, 20)
+    
+    report = (
+        f"📊 **ПОЛНАЯ СТАТИСТИКА**\n"
+        f"━" * 35 + "\n"
+        f"👤 Пользователь: {username}\n"
+        f"🆔 ID: `{target_id}`\n\n"
+        f"📌 **ОБЩАЯ ИНФОРМАЦИЯ:**\n"
+        f"• 👑 Роль: {stats['role']}\n"
+        f"• 📊 Уровень: {stats['level']}\n"
+        f"• ⭐ Карма: {stats['karma']}\n\n"
+        f"⚠️ **НАРУШЕНИЯ:**\n"
+        f"• 🚫 Всего нарушений: {stats['violations']}\n"
+        f"• ⚠️ Варнов: {stats['warns']}\n\n"
+    )
+    if stats['is_muted']:
+        remaining = stats['mute_until'] - int(time.time())
+        minutes = remaining // 60
+        seconds = remaining % 60
+        report += f"🔴 **В муте:** {minutes}м {seconds}с\n"
+    else:
+        report += f"🟢 **Не в муте**\n"
+    
+    report += f"\n📊 **СТАТИСТИКА ДЕЙСТВИЙ:**\n"
+    report += f"• 👮 Действий как админ: {stats['admin_actions']}\n"
+    report += f"• 🎯 Попал под действия: {stats['target_actions']}\n"
+    
+    if logs:
+        report += f"\n📋 **ПОСЛЕДНИЕ ДЕЙСТВИЯ:**\n"
+        for admin_id, admin_name, action, t_id, t_name, details, date in logs[:10]:
+            report += f"• {admin_name} → {action}"
+            if t_id:
+                report += f" → {t_name}"
+            if details:
+                report += f" ({details})"
+            report += f"\n  🕐 {date[:16]}\n"
+    
+    report += "\n━" * 35 + "\n"
+    report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    
+    m = await call.message.answer(report, parse_mode="Markdown")
+    asyncio.create_task(delete_after(m, 60))
+    await call.answer("📊 Полная статистика загружена!")
+
+# ============================================================
+# === ОБРАБОТКА КНОПОК ===
 # ============================================================
 @dp.callback_query()
 async def handle_callbacks(call: types.CallbackQuery):
@@ -752,25 +834,58 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer("⛔ Нет прав!", True)
         return
 
-    # === ЛОГИ ===
+    # === ЛОГИ (НОВЫЕ, КРАСИВЫЕ) ===
     if data == "admin_logs":
-        logs = await get_admin_logs(20)
+        logs = await get_admin_logs(30)
         if not logs:
             m = await call.message.answer("📋 Логов пока нет")
             asyncio.create_task(delete_after(m, 15))
             await call.answer()
             return
+        
         text = "📋 **Логи админов:**\n\n"
-        for admin_id, action, target_id, details, date in logs:
-            admin_name = await get_username_by_id(admin_id)
-            text += f"• {admin_name} → {action}"
+        for admin_id, admin_name, action, target_id, target_name, details, date in logs:
+            text += f"• {admin_name} {action}"
             if target_id:
-                text += f" (пользователь: {await get_username_by_id(target_id)})"
+                text += f" → {target_name}"
             if details:
-                text += f"\n  📝 {details[:50]}..."
+                text += f"\n  📝 {details[:60]}..."
             text += f"\n  🕐 {date[:16]}\n\n"
-        m = await call.message.answer(text, parse_mode="Markdown")
+        
+        # Кнопка для полных логов
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Полные логи", callback_data="admin_full_logs")]
+        ])
+        
+        m = await call.message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
         asyncio.create_task(delete_after(m, 45))
+        await call.answer()
+        return
+
+    if data == "admin_full_logs":
+        if user_id not in ADMIN_IDS:
+            await call.answer("⛔ Только главные админы!", True)
+            return
+        
+        logs = await get_admin_logs(50)
+        if not logs:
+            m = await call.message.answer("📋 Логов пока нет")
+            asyncio.create_task(delete_after(m, 15))
+            await call.answer()
+            return
+        
+        text = "📊 **ПОЛНЫЕ ЛОГИ (последние 50):**\n\n"
+        for admin_id, admin_name, action, target_id, target_name, details, date in logs:
+            text += f"👤 {admin_name}\n"
+            text += f"🔧 {action}"
+            if target_id:
+                text += f" → {target_name}"
+            if details:
+                text += f"\n📝 {details}"
+            text += f"\n🕐 {date}\n\n"
+        
+        m = await call.message.answer(text, parse_mode="Markdown")
+        asyncio.create_task(delete_after(m, 60))
         await call.answer()
         return
 
@@ -947,7 +1062,7 @@ async def admin_input(msg: types.Message):
         username = await get_username_by_id(target_id)
         report = (
             f"📊 **Статистика пользователя**\n"
-            f"━" * 25 + "\n"
+            f"━" * 30 + "\n"
             f"👤 Пользователь: {username}\n"
             f"🆔 ID: `{target_id}`\n\n"
             f"📌 **Общая информация:**\n"
@@ -965,9 +1080,17 @@ async def admin_input(msg: types.Message):
             report += f"🔴 **В муте:** {minutes}м {seconds}с\n"
         else:
             report += f"🟢 **Не в муте**\n"
-        report += "\n━" * 25 + "\n"
+        report += "\n━" * 30 + "\n"
         report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        m = await msg.answer(report, parse_mode="Markdown")
+        
+        # Кнопка "Показать фулл" для главных админов
+        keyboard = None
+        if user_id in ADMIN_IDS:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📊 Показать фулл", callback_data=f"full_stats_{target_id}")]
+            ])
+        
+        m = await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
         asyncio.create_task(delete_after(m, 45))
         current_action[user_id] = None
         return
@@ -1207,7 +1330,7 @@ async def filter_msg(msg: types.Message):
         await msg.delete()
         await add_violation(user_id, msg.chat.id, "violence")
         await add_mute(user_id, settings['mute_duration'])
-        await log_admin_action(0, "auto_mute", user_id, "Угрозы")
+        await log_admin_action(0, "🚨 Автомут (угрозы)", user_id, "Угрозы")
         m1 = await msg.answer("🚨 **УГРОЗЫ ЗАПРЕЩЕНЫ!**")
         m2 = await msg.answer(f"⛔ Мут {settings['mute_duration']//60} минут!")
         asyncio.create_task(delete_after(m1, 10))
@@ -1217,6 +1340,7 @@ async def filter_msg(msg: types.Message):
     if has_photo and has_bad_words(text):
         await msg.delete()
         await add_violation(user_id, msg.chat.id, "badwords_with_photo")
+        await log_admin_action(0, "🚫 Мат с фото", user_id, "Мат с фото")
         m = await msg.answer("🚫 **Мат с фото запрещён!**")
         asyncio.create_task(delete_after(m, 10))
         return
@@ -1224,6 +1348,7 @@ async def filter_msg(msg: types.Message):
     if await has_blocked_link(text):
         await msg.delete()
         await add_violation(user_id, msg.chat.id, "blocked_link")
+        await log_admin_action(0, "🔗 Блокировка ссылки", user_id, "Запрещённая ссылка")
         m = await msg.answer("🔗 **Ссылка заблокирована!**")
         asyncio.create_task(delete_after(m, 10))
         return
@@ -1253,19 +1378,17 @@ async def filter_channel_posts(msg: types.Message):
 async def background_tasks():
     while True:
         try:
-            # Авто-снятие варнов
             async with aiosqlite.connect("bot.db") as db:
                 await db.execute("DELETE FROM warnings WHERE date < datetime('now', '-1 day')")
                 await db.commit()
             
-            # Ежедневный отчёт
             now = datetime.now()
             if now.hour == 0 and now.minute == 0:
                 try:
                     await bot.send_message(
                         LOG_CHANNEL_ID,
                         f"☀️ **Ежедневный отчёт**\n"
-                        f"━" * 25 + "\n"
+                        f"━" * 30 + "\n"
                         f"📅 {now.strftime('%d.%m.%Y')}\n\n"
                         f"✨ Бот работает стабильно!\n"
                         f"🌴 Хорошего дня!",
@@ -1274,7 +1397,6 @@ async def background_tasks():
                 except:
                     pass
             
-            # Уведомления о снятии мута
             async with aiosqlite.connect("bot.db") as db:
                 cursor = await db.execute(
                     "SELECT user_id, until FROM mutes WHERE until <= ? AND until > ?",
