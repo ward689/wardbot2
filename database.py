@@ -138,7 +138,7 @@ async def init_db():
     # Добавляем домены в белый список
     from config import WHITELIST_DOMAINS
     async with aiosqlite.connect(DB_NAME) as db:
-        for domain in WHILIST_DOMAINS:
+        for domain in WHITELIST_DOMAINS:
             try:
                 await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, 0))
             except:
