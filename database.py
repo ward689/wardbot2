@@ -48,7 +48,6 @@ async def init_db():
             )
         """)
         
-        # === НОВАЯ ТАБЛИЦА ЛОГОВ ===
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,7 +129,7 @@ async def init_db():
                 pass
         await db.commit()
 
-# === ОСТАЛЬНЫЕ ФУНКЦИИ ===
+# === ВАРНЫ ===
 async def add_warning(user_id, chat_id, reason, admin_id=0):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO warnings (user_id, chat_id, reason, admin_id) VALUES (?, ?, ?, ?)", (user_id, chat_id, reason, admin_id))
@@ -160,6 +159,7 @@ async def get_user_warnings_details(user_id, chat_id):
         cursor = await db.execute("SELECT reason, admin_id, date FROM warnings WHERE user_id = ? AND chat_id = ? ORDER BY date DESC", (user_id, chat_id))
         return await cursor.fetchall()
 
+# === МУТЫ ===
 async def add_mute(user_id, duration):
     until = int(time.time()) + duration
     async with aiosqlite.connect(DB_NAME) as db:
@@ -185,6 +185,7 @@ async def get_mute_until(user_id):
         result = await cursor.fetchone()
         return result[0] if result else 0
 
+# === РОЛИ ===
 async def set_user_level(user_id: int, level: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO roles (user_id, level, role) VALUES (?, ?, ?)", (user_id, level, f"admin_{level}" if level > 0 else "user"))
@@ -213,11 +214,26 @@ async def is_moderator(user_id: int) -> bool:
 async def is_admin(user_id: int) -> bool:
     return await get_user_level(user_id) >= 6
 
-# === НОВАЯ СИСТЕМА ЛОГОВ ===
+# === НОВАЯ СИСТЕМА ЛОГОВ (С USERNAME) ===
+async def get_username_by_id_safe(user_id: int) -> str:
+    """Безопасное получение username, если не получается — возвращает ID"""
+    try:
+        from aiogram import Bot
+        from config import BOT_TOKEN
+        bot = Bot(token=BOT_TOKEN)
+        user = await bot.get_user(user_id)
+        if user and user.username:
+            return f"@{user.username}"
+        elif user and user.first_name:
+            return user.first_name
+        return str(user_id)
+    except:
+        return str(user_id)
+
 async def log_admin_action(admin_id: int, action: str, target_id: int = None, details: str = ""):
     try:
-        admin_name = await get_username_by_id(admin_id)
-        target_name = await get_username_by_id(target_id) if target_id else ""
+        admin_name = await get_username_by_id_safe(admin_id)
+        target_name = await get_username_by_id_safe(target_id) if target_id else ""
     except:
         admin_name = str(admin_id)
         target_name = str(target_id) if target_id else ""
@@ -244,13 +260,6 @@ async def get_admin_logs_by_user(user_id: int, limit: int = 50):
             (user_id, user_id, limit)
         )
         return await cursor.fetchall()
-
-async def get_username_by_id(user_id: int) -> str:
-    try:
-        user = await bot.get_user(user_id)
-        return f"@{user.username}" if user and user.username else str(user_id)
-    except:
-        return str(user_id)
 
 # === КАРМА ===
 async def add_karma(user_id: int, amount: int):
@@ -287,7 +296,6 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
         level = await get_user_level(user_id)
         role = await get_user_role(user_id)
         
-        # Логи по пользователю
         cursor = await db.execute("SELECT COUNT(*) FROM admin_logs WHERE admin_id = ?", (user_id,))
         admin_actions = (await cursor.fetchone())[0] or 0
         cursor = await db.execute("SELECT COUNT(*) FROM admin_logs WHERE target_id = ?", (user_id,))
