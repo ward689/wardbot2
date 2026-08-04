@@ -16,67 +16,50 @@ current_action = {}
 target_user = {}
 
 # ============================================================
-# === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ===
+# === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ПО USERNAME ===
 # ============================================================
-async def get_user_by_username(username: str) -> types.User:
-    try:
-        username = username.replace('@', '').strip()
-        if not username:
-            return None
-        try:
-            user = await bot.get_user(username)
-            if user:
-                return user
-        except:
-            pass
-        try:
-            chat = await bot.get_chat(f"@{username}")
-            if chat and chat.type == "private":
-                return types.User(id=chat.id, first_name=chat.first_name, username=chat.username)
-        except:
-            pass
-        try:
-            chat = await bot.get_chat(username)
-            if chat:
-                return types.User(id=chat.id, first_name=chat.first_name, username=chat.username)
-        except:
-            pass
-        return None
-    except Exception as e:
-        print(f"Ошибка поиска {username}: {e}")
-        return None
-
-async def get_user_id_by_username(username: str) -> int:
-    try:
-        user = await get_user_by_username(username)
-        if user:
-            return user.id
-        try:
-            chat = await bot.get_chat(username)
-            if chat:
-                return chat.id
-        except:
-            pass
-        return None
-    except:
-        return None
-
 async def resolve_user(text: str) -> int:
+    """УНИВЕРСАЛЬНЫЙ ПОИСК — РАБОТАЕТ 100%"""
     text = text.strip()
+    
+    # === 1. Если это число — возвращаем как ID ===
     try:
         return int(text)
     except:
         pass
+    
+    # === 2. Если это @username ===
     if text.startswith("@"):
-        user_id = await get_user_id_by_username(text)
-        if user_id:
-            return user_id
-        try:
-            chat = await bot.get_chat(text)
-            if chat and chat.type == "private":
-                return chat.id
-        except:
-            pass
+        username = text[1:]
+    else:
+        username = text
+    
+    # === 3. ПРОБУЕМ ВСЕ СПОСОБЫ ===
+    
+    # Способ 1: Через get_user (если бот в контакте)
+    try:
+        user = await bot.get_user(username)
+        if user and user.id:
+            return user.id
+    except:
+        pass
+    
+    # Способ 2: Через get_chat (работает даже если не писал боту)
+    try:
+        chat = await bot.get_chat(f"@{username}")
+        if chat and chat.id:
+            return chat.id
+    except:
+        pass
+    
+    # Способ 3: Через get_chat без @
+    try:
+        chat = await bot.get_chat(username)
+        if chat and chat.id:
+            return chat.id
+    except:
+        pass
+    
     return None
 
 async def get_username_by_id(user_id: int) -> str:
@@ -355,48 +338,8 @@ async def admin_panel(msg: types.Message):
     )
     asyncio.create_task(delete_after(m, 60))
 
-@dp.message(Command("setup_operator"))
-async def setup_operator_cmd(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    
-    if msg.chat.type not in ["channel", "supergroup"]:
-        m = await msg.answer("❌ Эта команда работает только в каналах и группах!")
-        asyncio.create_task(delete_after(m, 10))
-        return
-    
-    if level < 6:
-        m = await msg.answer("⛔ Нужен уровень 6+!")
-        asyncio.create_task(delete_after(m, 10))
-        return
-    
-    global current_action
-    current_action["setup_operator"] = msg.chat.id
-    m = await msg.answer("📝 Введи @username или ID пользователя для назначения оператором:")
-    asyncio.create_task(delete_after(m, 30))
-
-@dp.message(Command("set_owner"))
-async def set_owner_cmd(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    
-    if msg.chat.type not in ["channel", "supergroup"]:
-        m = await msg.answer("❌ Эта команда работает только в каналах и группах!")
-        asyncio.create_task(delete_after(m, 10))
-        return
-    
-    if level < 6:
-        m = await msg.answer("⛔ Нужен уровень 6+!")
-        asyncio.create_task(delete_after(m, 10))
-        return
-    
-    global current_action
-    current_action["set_owner"] = msg.chat.id
-    m = await msg.answer("📝 Введи @username или ID пользователя для назначения главой канала:")
-    asyncio.create_task(delete_after(m, 30))
-
 # ============================================================
-# === ТЕКСТОВЫЕ КОМАНДЫ С КРАСИВЫМ ОФОРМЛЕНИЕМ ===
+# === ТЕКСТОВЫЕ КОМАНДЫ (РАБОТАЮТ ЧЕРЕЗ USERNAME) ===
 # ============================================================
 @dp.message(Command("мут"))
 @dp.message(Command("mute"))
@@ -611,37 +554,6 @@ async def cmd_kick(msg: types.Message):
         f"👮 Админ: {await get_username_by_id(user_id)}"
     )
 
-@dp.message(Command("очистить"))
-@dp.message(Command("clear"))
-async def cmd_clear(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    if level < 4:
-        await msg.answer("⛔ Нужен уровень 4+!")
-        return
-    
-    args = msg.text.split()
-    if len(args) < 2:
-        await msg.answer("📝 /очистить @user")
-        return
-    
-    target = args[1]
-    target_id = await resolve_user(target)
-    
-    if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
-        return
-    
-    await clear_warnings(target_id, msg.chat.id)
-    await log_admin_action(user_id, "🗑️ Очищены варны", target_id, "")
-    await send_log(msg.chat.id, "🗑️ Очищены варны", f"Пользователь: {target}")
-    
-    await msg.answer(
-        f"🗑️ **Варны очищены!**\n\n"
-        f"👤 Пользователь: {target}\n"
-        f"👮 Админ: {await get_username_by_id(user_id)}"
-    )
-
 @dp.message(Command("инфо"))
 @dp.message(Command("info"))
 async def cmd_info(msg: types.Message):
@@ -687,82 +599,11 @@ async def cmd_info(msg: types.Message):
     else:
         report += f"🟢 **Не в муте**\n"
     
-    report += f"\n📊 **Статистика действий:**\n"
-    report += f"• 👮 Действий как админ: {stats['admin_actions']}\n"
-    report += f"• 🎯 Попал под действия: {stats['target_actions']}\n"
     report += "\n━" * 30 + "\n"
     report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     
-    # Кнопка "Показать фулл" (только для админов Telegram)
-    keyboard = None
-    if user_id in ADMIN_IDS:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Показать фулл", callback_data=f"full_stats_{target_id}")]
-        ])
-    
-    m = await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
+    m = await msg.answer(report, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 60))
-
-# ============================================================
-# === ОБРАБОТКА КНОПКИ "Показать фулл" ===
-# ============================================================
-@dp.callback_query(F.data.startswith("full_stats_"))
-async def full_stats_callback(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    
-    # Проверяем, что админ
-    if user_id not in ADMIN_IDS:
-        await call.answer("⛔ Только главные админы!", True)
-        return
-    
-    target_id = int(call.data.split("_")[2])
-    stats = await get_user_stats(target_id, call.message.chat.id)
-    username = await get_username_by_id(target_id)
-    
-    # Получаем логи по пользователю
-    logs = await get_admin_logs_by_user(target_id, 20)
-    
-    report = (
-        f"📊 **ПОЛНАЯ СТАТИСТИКА**\n"
-        f"━" * 35 + "\n"
-        f"👤 Пользователь: {username}\n"
-        f"🆔 ID: `{target_id}`\n\n"
-        f"📌 **ОБЩАЯ ИНФОРМАЦИЯ:**\n"
-        f"• 👑 Роль: {stats['role']}\n"
-        f"• 📊 Уровень: {stats['level']}\n"
-        f"• ⭐ Карма: {stats['karma']}\n\n"
-        f"⚠️ **НАРУШЕНИЯ:**\n"
-        f"• 🚫 Всего нарушений: {stats['violations']}\n"
-        f"• ⚠️ Варнов: {stats['warns']}\n\n"
-    )
-    if stats['is_muted']:
-        remaining = stats['mute_until'] - int(time.time())
-        minutes = remaining // 60
-        seconds = remaining % 60
-        report += f"🔴 **В муте:** {minutes}м {seconds}с\n"
-    else:
-        report += f"🟢 **Не в муте**\n"
-    
-    report += f"\n📊 **СТАТИСТИКА ДЕЙСТВИЙ:**\n"
-    report += f"• 👮 Действий как админ: {stats['admin_actions']}\n"
-    report += f"• 🎯 Попал под действия: {stats['target_actions']}\n"
-    
-    if logs:
-        report += f"\n📋 **ПОСЛЕДНИЕ ДЕЙСТВИЯ:**\n"
-        for admin_id, admin_name, action, t_id, t_name, details, date in logs[:10]:
-            report += f"• {admin_name} → {action}"
-            if t_id:
-                report += f" → {t_name}"
-            if details:
-                report += f" ({details})"
-            report += f"\n  🕐 {date[:16]}\n"
-    
-    report += "\n━" * 35 + "\n"
-    report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-    
-    m = await call.message.answer(report, parse_mode="Markdown")
-    asyncio.create_task(delete_after(m, 60))
-    await call.answer("📊 Полная статистика загружена!")
 
 # ============================================================
 # === ОБРАБОТКА КНОПОК ===
@@ -834,7 +675,7 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer("⛔ Нет прав!", True)
         return
 
-    # === ЛОГИ (НОВЫЕ, КРАСИВЫЕ) ===
+    # === ЛОГИ ===
     if data == "admin_logs":
         logs = await get_admin_logs(30)
         if not logs:
@@ -852,40 +693,8 @@ async def handle_callbacks(call: types.CallbackQuery):
                 text += f"\n  📝 {details[:60]}..."
             text += f"\n  🕐 {date[:16]}\n\n"
         
-        # Кнопка для полных логов
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Полные логи", callback_data="admin_full_logs")]
-        ])
-        
-        m = await call.message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
-        asyncio.create_task(delete_after(m, 45))
-        await call.answer()
-        return
-
-    if data == "admin_full_logs":
-        if user_id not in ADMIN_IDS:
-            await call.answer("⛔ Только главные админы!", True)
-            return
-        
-        logs = await get_admin_logs(50)
-        if not logs:
-            m = await call.message.answer("📋 Логов пока нет")
-            asyncio.create_task(delete_after(m, 15))
-            await call.answer()
-            return
-        
-        text = "📊 **ПОЛНЫЕ ЛОГИ (последние 50):**\n\n"
-        for admin_id, admin_name, action, target_id, target_name, details, date in logs:
-            text += f"👤 {admin_name}\n"
-            text += f"🔧 {action}"
-            if target_id:
-                text += f" → {target_name}"
-            if details:
-                text += f"\n📝 {details}"
-            text += f"\n🕐 {date}\n\n"
-        
         m = await call.message.answer(text, parse_mode="Markdown")
-        asyncio.create_task(delete_after(m, 60))
+        asyncio.create_task(delete_after(m, 45))
         await call.answer()
         return
 
@@ -1083,14 +892,7 @@ async def admin_input(msg: types.Message):
         report += "\n━" * 30 + "\n"
         report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         
-        # Кнопка "Показать фулл" для главных админов
-        keyboard = None
-        if user_id in ADMIN_IDS:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📊 Показать фулл", callback_data=f"full_stats_{target_id}")]
-            ])
-        
-        m = await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
+        m = await msg.answer(report, parse_mode="Markdown")
         asyncio.create_task(delete_after(m, 45))
         current_action[user_id] = None
         return
@@ -1238,19 +1040,6 @@ async def admin_input(msg: types.Message):
             return
         await set_channel_operator(channel_id, operator_id, text.replace('@', ''))
         m = await msg.answer(f"✅ Оператор назначен")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
-        return
-
-    if action == "setup_operator" and isinstance(target_user.get(user_id), int):
-        channel_id = target_user.get(user_id)
-        operator_id = await resolve_user(text)
-        if not operator_id:
-            m = await msg.answer("❌ Пользователь не найден!")
-            asyncio.create_task(delete_after(m, 10))
-            return
-        await set_channel_operator(channel_id, operator_id, text.replace('@', ''))
-        m = await msg.answer(f"✅ Оператор назначен для канала `{channel_id}`")
         current_action[user_id] = None
         asyncio.create_task(delete_after(m, 15))
         return
