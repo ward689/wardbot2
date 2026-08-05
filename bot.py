@@ -285,39 +285,39 @@ async def give_money(msg: types.Message):
         return
     
     try:
-        # Получаем количество участников
-        member_count = await bot.get_chat_member_count(chat_id)
-        
-        # Получаем список участников (только для админов — быстрее)
-        # Для обычных участников используем другой метод
         count = 0
         
-        # Пытаемся получить всех участников через get_chat_members (с пагинацией)
+        # === СПОСОБ 1: Через get_chat_administrators (работает всегда) ===
         try:
-            async for member in bot.get_chat_members(chat_id):
-                try:
-                    await add_karma(member.user.id, amount)
-                    count += 1
-                except:
-                    pass
-        except Exception as e:
-            print(f"Ошибка при выдаче монет: {e}")
-            # Если не получилось через get_chat_members, пробуем через администраторов
-            async for admin in bot.get_chat_administrators(chat_id):
+            admins = await bot.get_chat_administrators(chat_id)
+            for admin in admins:
                 try:
                     await add_karma(admin.user.id, amount)
                     count += 1
                 except:
                     pass
+        except Exception as e:
+            print(f"Ошибка при выдаче админам: {e}")
         
-        # Дополнительно выдаём владельцу чата (если не выдалось)
+        # === СПОСОБ 2: Через get_chat_members (с пагинацией) ===
         try:
-            owner = await bot.get_chat(chat_id)
-            if owner and owner.id:
-                await add_karma(owner.id, amount)
-                count += 1
-        except:
-            pass
+            offset = 0
+            limit = 100
+            while True:
+                members = await bot.get_chat_members(chat_id, offset=offset, limit=limit)
+                if not members:
+                    break
+                for member in members:
+                    try:
+                        await add_karma(member.user.id, amount)
+                        count += 1
+                    except:
+                        pass
+                offset += limit
+                if len(members) < limit:
+                    break
+        except Exception as e:
+            print(f"Ошибка при выдаче участникам: {e}")
         
         if count == 0:
             await msg.answer("❌ Не удалось выдать монеты! Убедитесь, что бот имеет права администратора.")
@@ -340,7 +340,7 @@ async def give_money(msg: types.Message):
         )
         
     except Exception as e:
-        await msg.answer(f"❌ Ошибка: {str(e)[:100]}\n\nУбедитесь, что бот имеет права администратора в группе!")
+        await msg.answer(f"❌ Ошибка: {str(e)[:200]}\n\n💡 Убедитесь, что бот имеет права администратора в группе!")
         print(f"Ошибка /givemoney: {e}")
 
 # ============================================================
