@@ -15,6 +15,7 @@ dp = Dispatcher()
 
 current_action = {}
 target_user = {}
+user_selected_chat = {}
 
 # ============================================================
 # === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ===
@@ -169,39 +170,151 @@ async def get_admin_keyboard(user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
-# === КОМАНДА /shop ===
+# === НОВЫЙ МАГАЗИН С ВЫБОРОМ ЧАТА ===
 # ============================================================
 @dp.message(Command("shop"))
 async def shop_cmd(msg: types.Message):
     user_id = msg.from_user.id
-    karma = await get_karma(user_id)
+    user_username = await get_username_by_id(user_id)
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_clear_warn")],
-        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_clear_mute")],
-        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
-    ])
+    # Список известных чатов (ЗАМЕНИ НА СВОИ!)
+    known_chats = [
+        (-1004483077304, "anon chat"),
+        (-1004523675640, "ришон чатик"),
+        (-1004623675640, "Анон кармиэль чат"),
+    ]
+    
+    chat_buttons = []
+    
+    # Добавляем известные чаты
+    for chat_id, chat_name in known_chats:
+        try:
+            chat = await bot.get_chat(chat_id)
+            if chat:
+                chat_buttons.append([InlineKeyboardButton(
+                    text=f"📢 {chat_name}",
+                    callback_data=f"shop_select_chat_{chat_id}"
+                )])
+        except:
+            pass
+    
+    # Пытаемся получить чаты из базы
+    try:
+        async with aiosqlite.connect("bot.db") as db:
+            cursor = await db.execute(
+                "SELECT DISTINCT chat_id FROM channel_settings"
+            )
+            chats = await cursor.fetchall()
+            for chat_id in chats:
+                try:
+                    chat = await bot.get_chat(chat_id[0])
+                    if chat and chat.id not in [c[0] for c in known_chats]:
+                        chat_name = chat.title or str(chat_id[0])
+                        chat_buttons.append([InlineKeyboardButton(
+                            text=f"📢 {chat_name[:30]}",
+                            callback_data=f"shop_select_chat_{chat_id[0]}"
+                        )])
+                except:
+                    pass
+    except:
+        pass
+    
+    # Если чатов нет — добавляем заглушку
+    if not chat_buttons:
+        for chat_id, chat_name in known_chats:
+            chat_buttons.append([InlineKeyboardButton(
+                text=f"📢 {chat_name}",
+                callback_data=f"shop_select_chat_{chat_id}"
+            )])
+    
+    chat_buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=chat_buttons)
     
     await msg.answer(
         f"🛍️ **Магазин**\n\n"
-        f"💰 Твой баланс: {karma} монет\n\n"
-        f"📌 **Товары:**\n"
-        f"🗑️ Снять варн — 500 монет\n"
-        f"🔓 Снять мут — 1000 монет\n\n"
-        f"Выбери действие:",
+        f"👤 Пользователь: {user_username}\n"
+        f"💰 Баланс: {await get_karma(user_id)} монет\n\n"
+        f"📌 **Выбери чат, в котором хочешь совершить покупку:**\n\n"
+        f"ℹ️ Если твоего чата нет в списке — бот должен быть админом в нём",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
-@dp.callback_query(F.data.startswith("shop_"))
-async def shop_callback(call: types.CallbackQuery):
+@dp.callback_query(F.data.startswith("shop_select_chat_"))
+async def shop_select_chat(call: types.CallbackQuery):
     user_id = call.from_user.id
-    action = call.data.replace("shop_", "")
+    chat_id = int(call.data.replace("shop_select_chat_", ""))
     
-    if action == "close":
-        await call.message.delete()
-        await call.answer("🛍️ Магазин закрыт")
+    # Сохраняем выбранный чат
+    user_selected_chat[user_id] = chat_id
+    
+    # Получаем название чата
+    try:
+        chat = await bot.get_chat(chat_id)
+        chat_name = chat.title or str(chat_id)
+    except:
+        chat_name = str(chat_id)
+    
+    # Проверяем наличие варнов у пользователя
+    warns = await get_warnings(user_id, chat_id)
+    is_muted_user = await is_muted(user_id)
+    karma = await get_karma(user_id)
+    
+    # Формируем кнопки магазина
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
+        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
+        [InlineKeyboardButton(text="🔄 Разбан — 2500 монет", callback_data="shop_buy_unban")],
+        [InlineKeyboardButton(text="🔗 Одноразовая ссылка — 150 монет", callback_data="shop_buy_invite")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
+    ])
+    
+    status_text = ""
+    if warns > 0:
+        status_text += f"\n⚠️ У тебя {warns} варнов"
+    if is_muted_user:
+        status_text += f"\n🔴 Ты в муте!"
+    if warns == 0 and not is_muted_user:
+        status_text += f"\n✅ Нарушений нет"
+    
+    await call.message.edit_text(
+        f"🛍️ **Магазин**\n\n"
+        f"📢 Чат: {chat_name}\n"
+        f"👤 Пользователь: {await get_username_by_id(user_id)}\n"
+        f"💰 Баланс: {karma} монет{status_text}\n\n"
+        f"📌 **Доступные товары:**\n"
+        f"🗑️ Снять варн — 500 монет\n"
+        f"🔓 Снять мут — 1000 монет\n"
+        f"🔄 Разбан — 2500 монет\n"
+        f"🔗 Одноразовая ссылка — 150 монет\n\n"
+        f"Выбери действие:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "shop_back")
+async def shop_back(call: types.CallbackQuery):
+    await shop_cmd(call.message)
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("shop_buy_"))
+async def shop_buy(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    action = call.data.replace("shop_buy_", "")
+    chat_id = user_selected_chat.get(user_id)
+    
+    if not chat_id:
+        await call.answer("❌ Сначала выбери чат!", show_alert=True)
         return
+    
+    try:
+        chat = await bot.get_chat(chat_id)
+        chat_name = chat.title or str(chat_id)
+    except:
+        chat_name = str(chat_id)
     
     karma = await get_karma(user_id)
     
@@ -209,15 +322,16 @@ async def shop_callback(call: types.CallbackQuery):
         if karma < 500:
             await call.answer("❌ Недостаточно монет! Нужно 500", show_alert=True)
             return
-        warns = await get_warnings(user_id, call.message.chat.id)
+        warns = await get_warnings(user_id, chat_id)
         if warns == 0:
-            await call.answer("❌ У тебя нет варнов!", show_alert=True)
+            await call.answer("❌ У тебя нет варнов в этом чате!", show_alert=True)
             return
-        await clear_warnings(user_id, call.message.chat.id)
+        await clear_warnings(user_id, chat_id)
         await add_karma(user_id, -500)
         await call.answer("✅ Варны сняты! -500 монет", show_alert=True)
         await call.message.edit_text(
             f"✅ **Варны сняты!**\n\n"
+            f"📢 Чат: {chat_name}\n"
             f"💰 Остаток: {await get_karma(user_id)} монет\n"
             f"🛍️ Для покупок используй /shop",
             parse_mode="Markdown"
@@ -236,112 +350,59 @@ async def shop_callback(call: types.CallbackQuery):
         await call.answer("✅ Мут снят! -1000 монет", show_alert=True)
         await call.message.edit_text(
             f"✅ **Мут снят!**\n\n"
+            f"📢 Чат: {chat_name}\n"
             f"💰 Остаток: {await get_karma(user_id)} монет\n"
             f"🛍️ Для покупок используй /shop",
             parse_mode="Markdown"
         )
         return
     
+    if action == "unban":
+        if karma < 2500:
+            await call.answer("❌ Недостаточно монет! Нужно 2500", show_alert=True)
+            return
+        if await is_muted(user_id):
+            await remove_mute(user_id)
+        await clear_warnings(user_id, chat_id)
+        await add_karma(user_id, -2500)
+        await call.answer("✅ Разбан выполнен! -2500 монет", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Разбан выполнен!**\n\n"
+            f"📢 Чат: {chat_name}\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет\n"
+            f"🛍️ Для покупок используй /shop",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if action == "invite":
+        if karma < 150:
+            await call.answer("❌ Недостаточно монет! Нужно 150", show_alert=True)
+            return
+        try:
+            invite_link = await bot.create_chat_invite_link(chat_id, member_limit=1)
+            await add_karma(user_id, -150)
+            await call.answer("✅ Ссылка создана! -150 монет", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Одноразовая ссылка создана!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"🔗 Ссылка: {invite_link.invite_link}\n"
+                f"⚠️ Ссылка действительна для одного пользователя!\n\n"
+                f"💰 Остаток: {await get_karma(user_id)} монет\n"
+                f"🛍️ Для покупок используй /shop",
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
+        return
+    
     await call.answer("❌ Неизвестное действие")
 
-# ============================================================
-# === КОМАНДА /givemoney (ТОЛЬКО ДЛЯ ОВНЕРА) ===
-# ============================================================
-@dp.message(Command("givemoney"))
-async def give_money(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    
-    # Только для овнера (уровень 4 или ID в ADMIN_IDS)
-    if level < 4 and user_id not in ADMIN_IDS:
-        await msg.answer("⛔ Только главный администратор может выдавать монеты!")
-        return
-    
-    args = msg.text.split()
-    if len(args) < 2:
-        await msg.answer("📝 Использование: `/givemoney 1000` — выдаёт 1000 монет ВСЕМ в чате", parse_mode="Markdown")
-        return
-    
-    try:
-        amount = int(args[1])
-    except:
-        await msg.answer("❌ Введи число монет! Например: `/givemoney 500`", parse_mode="Markdown")
-        return
-    
-    if amount <= 0:
-        await msg.answer("❌ Сумма должна быть больше 0!")
-        return
-    
-    if amount > 10000:
-        await msg.answer("❌ Нельзя выдать больше 10000 монет за раз!")
-        return
-    
-    chat_id = msg.chat.id
-    
-    # Проверяем, что это группа
-    chat = await bot.get_chat(chat_id)
-    if chat.type not in ["group", "supergroup"]:
-        await msg.answer("❌ Эта команда работает только в группах!")
-        return
-    
-    try:
-        count = 0
-        
-        # === СПОСОБ 1: Через get_chat_administrators (работает всегда) ===
-        try:
-            admins = await bot.get_chat_administrators(chat_id)
-            for admin in admins:
-                try:
-                    await add_karma(admin.user.id, amount)
-                    count += 1
-                except:
-                    pass
-        except Exception as e:
-            print(f"Ошибка при выдаче админам: {e}")
-        
-        # === СПОСОБ 2: Через get_chat_members (с пагинацией) ===
-        try:
-            offset = 0
-            limit = 100
-            while True:
-                members = await bot.get_chat_members(chat_id, offset=offset, limit=limit)
-                if not members:
-                    break
-                for member in members:
-                    try:
-                        await add_karma(member.user.id, amount)
-                        count += 1
-                    except:
-                        pass
-                offset += limit
-                if len(members) < limit:
-                    break
-        except Exception as e:
-            print(f"Ошибка при выдаче участникам: {e}")
-        
-        if count == 0:
-            await msg.answer("❌ Не удалось выдать монеты! Убедитесь, что бот имеет права администратора.")
-            return
-        
-        await msg.answer(
-            f"💰 **Монеты выданы!**\n\n"
-            f"📌 Каждому участнику выдано: {amount} монет\n"
-            f"👥 Получили: {count} участников\n"
-            f"💳 Всего выдано: {amount * count} монет\n\n"
-            f"👮 Выдал: {await get_username_by_id(user_id)}"
-        )
-        
-        await send_log(
-            chat_id,
-            "💰 Выдача монет",
-            f"👮 Админ: {await get_username_by_id(user_id)}\n"
-            f"📌 Сумма: {amount} монет каждому\n"
-            f"👥 Получили: {count} участников"
-        )
-        
-    except Exception as e:
-        await msg.answer(f"❌ Ошибка: {str(e)[:200]}\n\n💡 Убедитесь, что бот имеет права администратора в группе!")
-        print(f"Ошибка /givemoney: {e}")
+@dp.callback_query(F.data == "shop_close")
+async def shop_close(call: types.CallbackQuery):
+    await call.message.delete()
+    await call.answer("🛍️ Магазин закрыт")
 
 # ============================================================
 # === КОМАНДА /id ===
@@ -440,6 +501,80 @@ async def my_role(msg: types.Message):
     asyncio.create_task(delete_after(m, 60))
 
 # ============================================================
+# === КОМАНДА /giveadmin ===
+# ============================================================
+@dp.message(Command("giveadmin"))
+async def give_admin(msg: types.Message):
+    user_id = msg.from_user.id
+    level = await get_user_level(user_id)
+    
+    if level < 3:
+        await msg.answer("⛔ Только администраторы (уровень 3+) могут выдавать админку!")
+        return
+    
+    args = msg.text.split()
+    if len(args) < 3:
+        await msg.answer(
+            "📝 **Использование:**\n"
+            "`/giveadmin @user уровень`\n\n"
+            "📊 **Уровни:**\n"
+            "0 — Участник\n"
+            "1 — Наблюдатель 🟢\n"
+            "2 — Модератор 🟠\n"
+            "3 — Администратор 🔴\n"
+            "4 — Главный администратор ⭐",
+            parse_mode="Markdown"
+        )
+        return
+    
+    target = args[1]
+    try:
+        new_level = int(args[2])
+    except:
+        await msg.answer("❌ Введи корректный уровень (0-4)!")
+        return
+    
+    if new_level < 0 or new_level > 4:
+        await msg.answer("❌ Уровень должен быть от 0 до 4!")
+        return
+    
+    target_id = await resolve_user(target, msg.chat.id)
+    if not target_id:
+        await msg.answer(f"❌ Пользователь {target} не найден!")
+        return
+    
+    target_level = await get_user_level(target_id)
+    if target_level >= level:
+        await msg.answer(f"❌ Нельзя выдать уровень выше своего ({level})!")
+        return
+    
+    await set_user_level(target_id, new_level)
+    await log_admin_action(user_id, f"👑 Выдана админка ({new_level})", target_id, f"Новый уровень: {new_level}")
+    
+    target_name = await get_username_by_id(target_id)
+    level_name = ADMIN_LEVELS.get(new_level, {}).get("name", "Участник")
+    level_emoji = ADMIN_LEVELS.get(new_level, {}).get("emoji", "👤")
+    
+    await msg.answer(
+        f"✅ **Админка выдана!**\n\n"
+        f"👤 Пользователь: {target_name}\n"
+        f"📊 Уровень: {new_level} {level_emoji}\n"
+        f"👑 Роль: {level_name}\n"
+        f"👮 Админ: {await get_username_by_id(user_id)}"
+    )
+    
+    try:
+        await bot.send_message(
+            target_id,
+            f"👑 **Вам выдана админка!**\n\n"
+            f"📊 Уровень: {new_level} {level_emoji}\n"
+            f"👑 Роль: {level_name}\n"
+            f"👮 Выдал: {await get_username_by_id(user_id)}"
+        )
+    except:
+        pass
+
+# ============================================================
 # === КОМАНДА /setupoperator ===
 # ============================================================
 @dp.message(Command("setupoperator"))
@@ -486,6 +621,71 @@ async def set_owner_cmd(msg: types.Message):
     target_user[user_id] = msg.chat.id
     m = await msg.answer("📝 Введи @username или ID пользователя для назначения главой канала:")
     asyncio.create_task(delete_after(m, 30))
+
+# ============================================================
+# === КОМАНДА /givemoney ===
+# ============================================================
+@dp.message(Command("givemoney"))
+async def give_money(msg: types.Message):
+    user_id = msg.from_user.id
+    level = await get_user_level(user_id)
+    
+    if level < 4 and user_id not in ADMIN_IDS:
+        await msg.answer("⛔ Только главный администратор может выдавать монеты!")
+        return
+    
+    args = msg.text.split()
+    if len(args) < 2:
+        await msg.answer("📝 Использование: `/givemoney 1000`", parse_mode="Markdown")
+        return
+    
+    try:
+        amount = int(args[1])
+    except:
+        await msg.answer("❌ Введи число монет!")
+        return
+    
+    if amount <= 0 or amount > 10000:
+        await msg.answer("❌ Введи число от 1 до 10000!")
+        return
+    
+    chat_id = msg.chat.id
+    
+    chat = await bot.get_chat(chat_id)
+    if chat.type not in ["group", "supergroup"]:
+        await msg.answer("❌ Только в группах!")
+        return
+    
+    try:
+        count = 0
+        # Выдаём всем администраторам
+        admins = await bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            try:
+                await add_karma(admin.user.id, amount)
+                count += 1
+            except:
+                pass
+        
+        # Также выдаём создателю группы
+        try:
+            await add_karma(chat.id, amount)
+            count += 1
+        except:
+            pass
+        
+        if count == 0:
+            await msg.answer("❌ Не удалось выдать монеты!")
+            return
+        
+        await msg.answer(
+            f"💰 **Выдано {amount} монет {count} админам!**\n\n"
+            f"👮 Выдал: {await get_username_by_id(user_id)}"
+        )
+        
+    except Exception as e:
+        await msg.answer(f"❌ Ошибка: {str(e)[:100]}")
+        print(f"Ошибка: {e}")
 
 # ============================================================
 # === ОСТАЛЬНЫЕ КОМАНДЫ ===
