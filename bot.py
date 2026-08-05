@@ -5,7 +5,8 @@ import random
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery, Message
+from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, STARS_PRICES, STARS_PACKAGES
 from database import *
 from aiohttp import web
@@ -16,6 +17,7 @@ dp = Dispatcher()
 current_action = {}
 target_user = {}
 user_selected_chat = {}
+pending_stars_purchases = {}
 
 # ============================================================
 # === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ===
@@ -334,6 +336,7 @@ async def shop_select_chat(call: types.CallbackQuery):
         [InlineKeyboardButton(text="⭐ Снять варн — 10 звёзд", callback_data="shop_buy_stars_clear_warn")],
         [InlineKeyboardButton(text="⭐ Снять мут — 20 звёзд", callback_data="shop_buy_stars_clear_mute")],
         [InlineKeyboardButton(text="⭐ Разбан — 50 звёзд", callback_data="shop_buy_stars_unban")],
+        [InlineKeyboardButton(text="💰 Купить звёзды", callback_data="shop_buy_stars_package")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
     ])
@@ -371,6 +374,31 @@ async def shop_select_chat(call: types.CallbackQuery):
 @dp.callback_query(F.data == "shop_back")
 async def shop_back(call: types.CallbackQuery):
     await shop_cmd(call.message)
+    await call.answer()
+
+@dp.callback_query(F.data == "shop_buy_stars_package")
+async def shop_buy_stars_package(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ 10 звёзд — 100 монет", callback_data="buy_stars_10")],
+        [InlineKeyboardButton(text="⭐ 50 звёзд — 400 монет", callback_data="buy_stars_50")],
+        [InlineKeyboardButton(text="⭐ 100 звёзд — 700 монет", callback_data="buy_stars_100")],
+        [InlineKeyboardButton(text="⭐ 500 звёзд — 3000 монет", callback_data="buy_stars_500")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
+    ])
+    
+    karma = await get_karma(user_id)
+    stars = await get_user_stars(user_id)
+    
+    await call.message.edit_text(
+        f"⭐ **Купить звёзды**\n\n"
+        f"💰 Твой баланс: {karma} монет\n"
+        f"⭐ Твои звёзды: {stars}\n\n"
+        f"📌 **Выбери пакет:**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
     await call.answer()
 
 @dp.callback_query(F.data.startswith("shop_buy_"))
@@ -625,6 +653,155 @@ async def buy_stars_close(call: types.CallbackQuery):
     await call.answer("Закрыто")
 
 # ============================================================
+# === НАСТОЯЩИЕ TELEGRAM STARS (ПЛАТЕЖИ) ===
+# ============================================================
+@dp.message(Command("buy_real_stars"))
+async def buy_real_stars_cmd(msg: types.Message):
+    user_id = msg.from_user.id
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Снять варн — 10 звёзд", callback_data="real_stars_clear_warn")],
+        [InlineKeyboardButton(text="⭐ Снять мут — 20 звёзд", callback_data="real_stars_clear_mute")],
+        [InlineKeyboardButton(text="⭐ Разбан — 50 звёзд", callback_data="real_stars_unban")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="real_stars_close")]
+    ])
+    
+    await msg.answer(
+        "⭐ **Купить за настоящие звёзды**\n\n"
+        "💰 Оплата происходит настоящими Telegram Stars.\n"
+        "После оплаты действие будет выполнено автоматически.\n\n"
+        "📌 **Выбери действие:**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("real_stars_"))
+async def real_stars_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    action = call.data.replace("real_stars_", "")
+    
+    if action == "close":
+        await call.message.delete()
+        await call.answer("Закрыто")
+        return
+    
+    # Выбираем чат для покупки (если не выбран, просим выбрать)
+    if user_id not in user_selected_chat:
+        await call.answer("❌ Сначала выбери чат в /shop!", show_alert=True)
+        return
+    
+    chat_id = user_selected_chat.get(user_id)
+    
+    prices = {
+        "clear_warn": {"amount": 10, "label": "Снять варн"},
+        "clear_mute": {"amount": 20, "label": "Снять мут"},
+        "unban": {"amount": 50, "label": "Разбан"},
+    }
+    
+    price_info = prices.get(action)
+    if not price_info:
+        await call.answer("❌ Неизвестное действие!", show_alert=True)
+        return
+    
+    # Сохраняем информацию о покупке
+    pending_stars_purchases[user_id] = {
+        "action": action,
+        "chat_id": chat_id,
+        "amount": price_info["amount"],
+        "label": price_info["label"]
+    }
+    
+    # Создаём инвойс для оплаты звёздами
+    try:
+        await bot.send_invoice(
+            chat_id=user_id,
+            title=f"⭐ {price_info['label']}",
+            description=f"Оплата {price_info['amount']} звёзд за {price_info['label']}",
+            payload=f"stars_{action}_{chat_id}",
+            provider_token="",  # Пусто для Telegram Stars
+            currency="XTR",
+            prices=[LabeledPrice(label=price_info['label'], amount=price_info['amount'])],
+            start_parameter="stars_payment",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False,
+            photo_url="https://telegra.ph/file/example.jpg",  # Можно заменить на свою картинку
+            photo_size=100,
+            photo_width=100,
+            photo_height=100,
+        )
+        await call.answer("💳 Счёт создан! Оплатите звёздами.")
+    except Exception as e:
+        await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
+
+# ============================================================
+# === ОБРАБОТКА УСПЕШНЫХ ПЛАТЕЖЕЙ ===
+# ============================================================
+@dp.pre_checkout_query()
+async def pre_checkout_query_handler(query: PreCheckoutQuery):
+    await query.answer(ok=True)
+
+@dp.message(F.successful_payment)
+async def successful_payment_handler(msg: Message):
+    user_id = msg.from_user.id
+    payload = msg.successful_payment.invoice_payload
+    total_amount = msg.successful_payment.total_amount // 100  # XTR в звёздах
+    
+    # Парсим payload
+    parts = payload.split("_")
+    if len(parts) >= 3 and parts[0] == "stars":
+        action = parts[1]
+        chat_id = int(parts[2])
+        
+        # Выполняем действие
+        try:
+            if action == "clear_warn":
+                warns = await get_warnings(user_id, chat_id)
+                if warns > 0:
+                    await clear_warnings(user_id, chat_id)
+                    await msg.answer(
+                        f"✅ **Варны сняты!**\n\n"
+                        f"📢 Чат: {chat_id}\n"
+                        f"⭐ Оплачено: {total_amount} звёзд\n"
+                        f"🛍️ Спасибо за покупку!",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await msg.answer("❌ У тебя нет варнов!")
+                return
+            
+            if action == "clear_mute":
+                if await is_muted(user_id):
+                    await remove_mute(user_id)
+                    await msg.answer(
+                        f"✅ **Мут снят!**\n\n"
+                        f"📢 Чат: {chat_id}\n"
+                        f"⭐ Оплачено: {total_amount} звёзд\n"
+                        f"🛍️ Спасибо за покупку!",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await msg.answer("❌ Ты не в муте!")
+                return
+            
+            if action == "unban":
+                if await is_muted(user_id):
+                    await remove_mute(user_id)
+                await clear_warnings(user_id, chat_id)
+                await msg.answer(
+                    f"✅ **Разбан выполнен!**\n\n"
+                    f"📢 Чат: {chat_id}\n"
+                    f"⭐ Оплачено: {total_amount} звёзд\n"
+                    f"🛍️ Спасибо за покупку!",
+                    parse_mode="Markdown"
+                )
+                return
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка: {str(e)[:100]}")
+
+# ============================================================
 # === АВТО-ОТВЕТЫ (НАСТРОЙКА В ЛС) ===
 # ============================================================
 @dp.message(Command("add_response"))
@@ -804,7 +981,6 @@ async def auto_response_input(msg: types.Message):
 # ============================================================
 @dp.message(F.text)
 async def auto_response_filter(msg: types.Message):
-    # Проверяем, есть ли авто-ответы для этого чата
     responses = await get_all_auto_responses(msg.chat.id)
     if not responses:
         return
@@ -1503,6 +1679,62 @@ async def show_stats(msg: types.Message):
     
     m = await msg.answer(text, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 30))
+
+# ============================================================
+# === КНОПКА "Полная статистика" ===
+# ============================================================
+@dp.callback_query(F.data.startswith("full_stats_"))
+async def full_stats_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    level = await get_user_level(user_id)
+    if level < 3:
+        await call.answer("⛔ Нет прав!", True)
+        return
+    
+    target_id = int(call.data.split("_")[2])
+    stats = await get_user_stats(target_id, call.message.chat.id)
+    username = await get_username_by_id(target_id)
+    
+    logs = []
+    async with aiosqlite.connect("bot.db") as db:
+        cursor = await db.execute(
+            "SELECT admin_name, action, target_name, details, date FROM admin_logs WHERE target_id = ? OR admin_id = ? ORDER BY date DESC",
+            (target_id, target_id)
+        )
+        logs = await cursor.fetchall()
+    
+    report = (
+        f"📊 **ПОЛНАЯ СТАТИСТИКА**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Пользователь: {username}\n"
+        f"🆔 ID: `{target_id}`\n\n"
+        f"📌 **Общая информация:**\n"
+        f"• 👑 Роль: {stats['role']}\n"
+        f"• 📊 Уровень: {stats['level']}\n"
+        f"• ⭐ Карма: {stats['karma']}\n"
+        f"• ⭐ Звёзды: {stats.get('stars', 0)}\n\n"
+        f"⚠️ **Нарушения:**\n"
+        f"• 🚫 Всего нарушений: {stats['violations']}\n"
+        f"• ⚠️ Варнов: {stats['warns']}\n"
+        f"{'🔴 В муте' if stats['is_muted'] else '🟢 Не в муте'}\n\n"
+    )
+    
+    if logs:
+        report += f"📋 **ВСЕ ДЕЙСТВИЯ:**\n"
+        for admin_name, action, target_name, details, date in logs[:20]:
+            report += f"• {admin_name} {action}"
+            if target_name:
+                report += f" → {target_name}"
+            if details:
+                report += f" ({details})"
+            report += f"\n  🕐 {date[:16]}\n"
+    
+    report += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    
+    m = await call.message.answer(report, parse_mode="Markdown")
+    asyncio.create_task(delete_after(m, 60))
+    await call.answer("📊 Полная статистика загружена!")
 
 # ============================================================
 # === ОБРАБОТКА КНОПОК ===
