@@ -1,5 +1,6 @@
 import aiosqlite
 import time
+import random
 from config import ADMIN_IDS
 
 DB_NAME = "bot.db"
@@ -34,7 +35,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS roles (
                 user_id INTEGER PRIMARY KEY,
                 level INTEGER DEFAULT 0,
-                role TEXT DEFAULT 'user'
+                role TEXT DEFAULT 'Участник'
             )
         """)
         
@@ -66,7 +67,7 @@ async def init_db():
                 channel_id INTEGER PRIMARY KEY,
                 enabled INTEGER DEFAULT 1,
                 mute_duration INTEGER DEFAULT 300,
-                warn_limit INTEGER DEFAULT 3,
+                warn_limit INTEGER DEFAULT 10,
                 block_new_accounts INTEGER DEFAULT 1,
                 min_account_age INTEGER DEFAULT 86400,
                 log_enabled INTEGER DEFAULT 1
@@ -138,13 +139,15 @@ async def add_warning(user_id, chat_id, reason, admin_id=0):
     settings = await get_channel_settings(chat_id)
     warns = await get_warnings(user_id, chat_id)
     if warns >= settings["warn_limit"]:
-        await add_mute(user_id, settings["mute_duration"])
-        return True
-    return False
+        # Рандомный мут от 5 до 30 минут
+        mute_duration = random.randint(300, 1800)
+        await add_mute(user_id, mute_duration)
+        return True, mute_duration
+    return False, 0
 
 async def get_warnings(user_id, chat_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ? AND chat_id = ? AND date > datetime('now', '-1 day')", (user_id, chat_id))
+        cursor = await db.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ? AND chat_id = ? AND date > datetime('now', '-7 day')", (user_id, chat_id))
         result = await cursor.fetchone()
         return result[0] if result else 0
 
@@ -184,13 +187,15 @@ async def get_mute_until(user_id):
         return result[0] if result else 0
 
 async def set_user_level(user_id: int, level: int):
+    from config import ADMIN_LEVELS
+    role_name = ADMIN_LEVELS.get(level, {}).get("name", "Участник")
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT OR REPLACE INTO roles (user_id, level, role) VALUES (?, ?, ?)", (user_id, level, f"admin_{level}" if level > 0 else "user"))
+        await db.execute("INSERT OR REPLACE INTO roles (user_id, level, role) VALUES (?, ?, ?)", (user_id, level, role_name))
         await db.commit()
 
 async def get_user_level(user_id: int) -> int:
     if user_id in ADMIN_IDS:
-        return 7
+        return 4
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT level FROM roles WHERE user_id = ?", (user_id,))
         result = await cursor.fetchone()
@@ -198,21 +203,25 @@ async def get_user_level(user_id: int) -> int:
 
 async def get_user_role(user_id: int) -> str:
     level = await get_user_level(user_id)
-    if level == 0:
-        return "👤 Пользователь"
     from config import ADMIN_LEVELS
     if level in ADMIN_LEVELS:
         return f"{ADMIN_LEVELS[level]['emoji']} {ADMIN_LEVELS[level]['name']}"
-    return "👤 Пользователь"
+    return "👤 Участник"
 
 async def is_moderator(user_id: int) -> bool:
     return await get_user_level(user_id) >= 2
 
 async def is_admin(user_id: int) -> bool:
-    return await get_user_level(user_id) >= 6
+    return await get_user_level(user_id) >= 3
+
+async def is_super_admin(user_id: int) -> bool:
+    return await get_user_level(user_id) >= 4
 
 async def get_username_by_id_safe(user_id: int) -> str:
     try:
+        from aiogram import Bot
+        from config import BOT_TOKEN
+        bot = Bot(token=BOT_TOKEN)
         user = await bot.get_user(user_id)
         if user and user.username:
             return f"@{user.username}"
@@ -242,14 +251,6 @@ async def get_admin_logs(limit: int = 50):
         cursor = await db.execute(
             "SELECT admin_id, admin_name, action, target_id, target_name, details, date FROM admin_logs ORDER BY date DESC LIMIT ?",
             (limit,)
-        )
-        return await cursor.fetchall()
-
-async def get_admin_logs_by_user(user_id: int, limit: int = 50):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute(
-            "SELECT admin_id, admin_name, action, target_id, target_name, details, date FROM admin_logs WHERE admin_id = ? OR target_id = ? ORDER BY date DESC LIMIT ?",
-            (user_id, user_id, limit)
         )
         return await cursor.fetchall()
 
@@ -285,12 +286,6 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
         mute_until = await get_mute_until(user_id) if is_muted_flag else 0
         level = await get_user_level(user_id)
         role = await get_user_role(user_id)
-        
-        cursor = await db.execute("SELECT COUNT(*) FROM admin_logs WHERE admin_id = ?", (user_id,))
-        admin_actions = (await cursor.fetchone())[0] or 0
-        cursor = await db.execute("SELECT COUNT(*) FROM admin_logs WHERE target_id = ?", (user_id,))
-        target_actions = (await cursor.fetchone())[0] or 0
-        
         return {
             "violations": violations,
             "warns": warns,
@@ -298,9 +293,7 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
             "is_muted": is_muted_flag,
             "mute_until": mute_until,
             "level": level,
-            "role": role,
-            "admin_actions": admin_actions,
-            "target_actions": target_actions
+            "role": role
         }
 
 async def get_daily_bonus(user_id: int) -> tuple:
@@ -399,7 +392,7 @@ async def get_channel_settings(channel_id: int) -> dict:
         return {
             "enabled": True,
             "mute_duration": 300,
-            "warn_limit": 3,
+            "warn_limit": 10,
             "block_new_accounts": True,
             "min_account_age": 86400,
             "log_enabled": True
@@ -415,7 +408,7 @@ async def update_channel_settings(channel_id: int, settings: dict):
                 channel_id,
                 settings.get("enabled", 1),
                 settings.get("mute_duration", 300),
-                settings.get("warn_limit", 3),
+                settings.get("warn_limit", 10),
                 settings.get("block_new_accounts", 1),
                 settings.get("min_account_age", 86400),
                 settings.get("log_enabled", 1)
