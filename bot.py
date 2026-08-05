@@ -265,7 +265,7 @@ async def give_money(msg: types.Message):
     try:
         amount = int(args[1])
     except:
-        await msg.answer("❌ Введи число монет!")
+        await msg.answer("❌ Введи число монет! Например: `/givemoney 500`", parse_mode="Markdown")
         return
     
     if amount <= 0:
@@ -277,55 +277,71 @@ async def give_money(msg: types.Message):
         return
     
     chat_id = msg.chat.id
-    chat = await bot.get_chat(chat_id)
-    member_count = 0
     
-    try:
-        if chat.type in ["group", "supergroup"]:
-            member_count = await bot.get_chat_member_count(chat_id)
-        else:
-            await msg.answer("❌ Эта команда работает только в группах!")
-            return
-    except:
-        await msg.answer("❌ Не удалось получить количество участников!")
+    # Проверяем, что это группа
+    chat = await bot.get_chat(chat_id)
+    if chat.type not in ["group", "supergroup"]:
+        await msg.answer("❌ Эта команда работает только в группах!")
         return
     
-    # Получаем всех участников и выдаём монеты
-    count = 0
-    async for member in bot.get_chat_administrators(chat_id):
+    try:
+        # Получаем количество участников
+        member_count = await bot.get_chat_member_count(chat_id)
+        
+        # Получаем список участников (только для админов — быстрее)
+        # Для обычных участников используем другой метод
+        count = 0
+        
+        # Пытаемся получить всех участников через get_chat_members (с пагинацией)
         try:
-            await add_karma(member.user.id, amount)
-            count += 1
+            async for member in bot.get_chat_members(chat_id):
+                try:
+                    await add_karma(member.user.id, amount)
+                    count += 1
+                except:
+                    pass
+        except Exception as e:
+            print(f"Ошибка при выдаче монет: {e}")
+            # Если не получилось через get_chat_members, пробуем через администраторов
+            async for admin in bot.get_chat_administrators(chat_id):
+                try:
+                    await add_karma(admin.user.id, amount)
+                    count += 1
+                except:
+                    pass
+        
+        # Дополнительно выдаём владельцу чата (если не выдалось)
+        try:
+            owner = await bot.get_chat(chat_id)
+            if owner and owner.id:
+                await add_karma(owner.id, amount)
+                count += 1
         except:
             pass
-    
-    # Также выдаём обычным участникам (не админам) — сложно без полного списка
-    # Поэтому выдаём всем через get_chat_administrators + ещё всем через get_chat
-    try:
-        async for member in bot.get_chat_members(chat_id):
-            try:
-                await add_karma(member.user.id, amount)
-                count += 1
-            except:
-                pass
-    except:
-        pass
-    
-    await msg.answer(
-        f"💰 **Монеты выданы!**\n\n"
-        f"📌 Каждому участнику выдано: {amount} монет\n"
-        f"👥 Получили: {count} участников\n"
-        f"💳 Всего выдано: {amount * count} монет\n\n"
-        f"👮 Выдал: {await get_username_by_id(user_id)}"
-    )
-    
-    await send_log(
-        chat_id,
-        "💰 Выдача монет",
-        f"👮 Админ: {await get_username_by_id(user_id)}\n"
-        f"📌 Сумма: {amount} монет каждому\n"
-        f"👥 Получили: {count} участников"
-    )
+        
+        if count == 0:
+            await msg.answer("❌ Не удалось выдать монеты! Убедитесь, что бот имеет права администратора.")
+            return
+        
+        await msg.answer(
+            f"💰 **Монеты выданы!**\n\n"
+            f"📌 Каждому участнику выдано: {amount} монет\n"
+            f"👥 Получили: {count} участников\n"
+            f"💳 Всего выдано: {amount * count} монет\n\n"
+            f"👮 Выдал: {await get_username_by_id(user_id)}"
+        )
+        
+        await send_log(
+            chat_id,
+            "💰 Выдача монет",
+            f"👮 Админ: {await get_username_by_id(user_id)}\n"
+            f"📌 Сумма: {amount} монет каждому\n"
+            f"👥 Получили: {count} участников"
+        )
+        
+    except Exception as e:
+        await msg.answer(f"❌ Ошибка: {str(e)[:100]}\n\nУбедитесь, что бот имеет права администратора в группе!")
+        print(f"Ошибка /givemoney: {e}")
 
 # ============================================================
 # === КОМАНДА /id ===
