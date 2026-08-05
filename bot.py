@@ -170,7 +170,7 @@ async def get_admin_keyboard(user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
-# === НОВЫЙ МАГАЗИН С ВЫБОРОМ ЧАТА ===
+# === МАГАЗИН С ВЫБОРОМ ЧАТА ===
 # ============================================================
 @dp.message(Command("shop"))
 async def shop_cmd(msg: types.Message):
@@ -186,7 +186,6 @@ async def shop_cmd(msg: types.Message):
     
     chat_buttons = []
     
-    # Добавляем известные чаты
     for chat_id, chat_name in known_chats:
         try:
             chat = await bot.get_chat(chat_id)
@@ -198,7 +197,6 @@ async def shop_cmd(msg: types.Message):
         except:
             pass
     
-    # Если чатов нет — добавляем заглушку
     if not chat_buttons:
         for chat_id, chat_name in known_chats:
             chat_buttons.append([InlineKeyboardButton(
@@ -224,22 +222,18 @@ async def shop_select_chat(call: types.CallbackQuery):
     user_id = call.from_user.id
     chat_id = int(call.data.replace("shop_select_chat_", ""))
     
-    # Сохраняем выбранный чат
     user_selected_chat[user_id] = chat_id
     
-    # Получаем название чата
     try:
         chat = await bot.get_chat(chat_id)
         chat_name = chat.title or str(chat_id)
     except:
         chat_name = str(chat_id)
     
-    # Проверяем наличие варнов у пользователя
     warns = await get_warnings(user_id, chat_id)
     is_muted_user = await is_muted(user_id)
     karma = await get_karma(user_id)
     
-    # Формируем кнопки магазина
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
         [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
@@ -358,7 +352,14 @@ async def shop_buy(call: types.CallbackQuery):
             await call.answer("❌ Недостаточно монет! Нужно 150", show_alert=True)
             return
         try:
-            invite_link = await bot.create_chat_invite_link(chat_id, member_limit=1)
+            try:
+                invite_link = await bot.create_chat_invite_link(chat_id, member_limit=1)
+            except Exception as e:
+                if "not enough rights" in str(e):
+                    await call.answer("❌ У бота нет прав создавать ссылки! Добавьте бота админом с правами на создание ссылок.", show_alert=True)
+                    return
+                raise e
+            
             await add_karma(user_id, -150)
             await call.answer("✅ Ссылка создана! -150 монет", show_alert=True)
             await call.message.edit_text(
@@ -601,7 +602,7 @@ async def set_owner_cmd(msg: types.Message):
     asyncio.create_task(delete_after(m, 30))
 
 # ============================================================
-# === КОМАНДА /givemoney ===
+# === КОМАНДА /givemoney (ВЫДАЁТ ВСЕМ!) ===
 # ============================================================
 @dp.message(Command("givemoney"))
 async def give_money(msg: types.Message):
@@ -636,34 +637,57 @@ async def give_money(msg: types.Message):
     
     try:
         count = 0
-        # Выдаём всем администраторам
-        admins = await bot.get_chat_administrators(chat_id)
-        for admin in admins:
-            try:
-                await add_karma(admin.user.id, amount)
-                count += 1
-            except:
-                pass
-        
-        # Также выдаём создателю группы
+        # Пытаемся получить ВСЕХ участников через get_chat_members с пагинацией
         try:
-            await add_karma(chat.id, amount)
-            count += 1
-        except:
-            pass
+            offset = 0
+            limit = 100
+            while True:
+                members = await bot.get_chat_members(chat_id, offset=offset, limit=limit)
+                if not members:
+                    break
+                for member in members:
+                    try:
+                        await add_karma(member.user.id, amount)
+                        count += 1
+                    except:
+                        pass
+                offset += limit
+                if len(members) < limit:
+                    break
+        except Exception as e:
+            print(f"Ошибка при выдаче участникам: {e}")
+            # Если не работает, выдаём хотя бы админам
+            admins = await bot.get_chat_administrators(chat_id)
+            for admin in admins:
+                try:
+                    await add_karma(admin.user.id, amount)
+                    count += 1
+                except:
+                    pass
         
         if count == 0:
-            await msg.answer("❌ Не удалось выдать монеты!")
+            await msg.answer("❌ Не удалось выдать монеты! Убедитесь, что бот имеет права администратора.")
             return
         
         await msg.answer(
-            f"💰 **Выдано {amount} монет {count} админам!**\n\n"
+            f"💰 **Монеты выданы!**\n\n"
+            f"📌 Каждому участнику выдано: {amount} монет\n"
+            f"👥 Получили: {count} участников\n"
+            f"💳 Всего выдано: {amount * count} монет\n\n"
             f"👮 Выдал: {await get_username_by_id(user_id)}"
         )
         
+        await send_log(
+            chat_id,
+            "💰 Выдача монет",
+            f"👮 Админ: {await get_username_by_id(user_id)}\n"
+            f"📌 Сумма: {amount} монет каждому\n"
+            f"👥 Получили: {count} участников"
+        )
+        
     except Exception as e:
-        await msg.answer(f"❌ Ошибка: {str(e)[:100]}")
-        print(f"Ошибка: {e}")
+        await msg.answer(f"❌ Ошибка: {str(e)[:200]}\n\n💡 Убедитесь, что бот имеет права администратора в группе!")
+        print(f"Ошибка /givemoney: {e}")
 
 # ============================================================
 # === ОСТАЛЬНЫЕ КОМАНДЫ ===
