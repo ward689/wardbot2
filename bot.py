@@ -161,12 +161,95 @@ async def get_admin_keyboard(user_id: int):
         buttons.append([InlineKeyboardButton(text="🔓 Размут", callback_data="admin_unmute")])
     if level >= 3:
         buttons.append([InlineKeyboardButton(text="🗑️ Очистить варны", callback_data="admin_clear_warns")])
-        buttons.append([InlineKeyboardButton(text="📊 Статистика чата", callback_data="admin_stats")])
+        buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
         buttons.append([InlineKeyboardButton(text="👑 Выдать админку", callback_data="admin_give_admin")])
     if level >= 4:
         buttons.append([InlineKeyboardButton(text="⭐ Управление уровнями", callback_data="admin_set_level")])
     buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ============================================================
+# === МАГАЗИН (shop) ===
+# ============================================================
+@dp.message(Command("shop"))
+async def shop_cmd(msg: types.Message):
+    user_id = msg.from_user.id
+    karma = await get_karma(user_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_clear_warn")],
+        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_clear_mute")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
+    ])
+    
+    await msg.answer(
+        f"🛍️ **Магазин**\n\n"
+        f"💰 Твой баланс: {karma} монет\n\n"
+        f"📌 **Товары:**\n"
+        f"🗑️ Снять варн — 500 монет\n"
+        f"🔓 Снять мут — 1000 монет\n\n"
+        f"Выбери действие:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("shop_"))
+async def shop_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    action = call.data.replace("shop_", "")
+    
+    if action == "close":
+        await call.message.delete()
+        await call.answer("🛍️ Магазин закрыт")
+        return
+    
+    karma = await get_karma(user_id)
+    
+    if action == "clear_warn":
+        if karma < 500:
+            await call.answer("❌ Недостаточно монет! Нужно 500", show_alert=True)
+            return
+        
+        # Проверяем, есть ли варны
+        warns = await get_warnings(user_id, call.message.chat.id)
+        if warns == 0:
+            await call.answer("❌ У тебя нет варнов!", show_alert=True)
+            return
+        
+        # Снимаем варны
+        await clear_warnings(user_id, call.message.chat.id)
+        await add_karma(user_id, -500)
+        await call.answer("✅ Варны сняты! -500 монет", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Варны сняты!**\n\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет\n"
+            f"🛍️ Для покупок используй /shop",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if action == "clear_mute":
+        if karma < 1000:
+            await call.answer("❌ Недостаточно монет! Нужно 1000", show_alert=True)
+            return
+        
+        if not await is_muted(user_id):
+            await call.answer("❌ Ты не в муте!", show_alert=True)
+            return
+        
+        # Снимаем мут
+        await remove_mute(user_id)
+        await add_karma(user_id, -1000)
+        await call.answer("✅ Мут снят! -1000 монет", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Мут снят!**\n\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет\n"
+            f"🛍️ Для покупок используй /shop",
+            parse_mode="Markdown"
+        )
+        return
+    
+    await call.answer("❌ Неизвестное действие")
 
 # ============================================================
 # === КОМАНДА /id ===
@@ -214,13 +297,11 @@ async def my_role(msg: types.Message):
     role = await get_user_role(msg.from_user.id)
     karma = await get_karma(msg.from_user.id)
     
-    # Проверяем оператора
     ops = []
     async with aiosqlite.connect("bot.db") as db:
         cursor = await db.execute("SELECT channel_id, channel_name FROM channel_operators WHERE operator_id = ?", (msg.from_user.id,))
         ops = await cursor.fetchall()
     
-    # Проверяем главу
     owner = []
     async with aiosqlite.connect("bot.db") as db:
         cursor = await db.execute("SELECT channel_id FROM channel_owners WHERE owner_id = ?", (msg.from_user.id,))
@@ -244,18 +325,20 @@ async def my_role(msg: types.Message):
     if level == 0:
         text += f"\n💡 Ты участник. Для получения прав обратись к администратору."
     else:
-        text += f"\n🔧 **Доступные команды:**\n"
+        text += f"\n🔧 Доступные команды:\n"
         if level >= 1:
-            text += f"• `/варн @user причина` — выдать варн\n"
-            text += f"• `/инфо @user` — информация о пользователе\n"
+            text += f"• `/варн @user причина`\n"
+            text += f"• `/инфо @user`\n"
         if level >= 2:
-            text += f"• `/мут @user 24ч причина` — замутить\n"
-            text += f"• `/размут @user` — снять мут\n"
-            text += f"• `/кик @user причина` — кик на 1 час\n"
+            text += f"• `/мут @user 24ч причина`\n"
+            text += f"• `/размут @user`\n"
         if level >= 3:
-            text += f"• `/бан @user причина` — бан на 30 дней\n"
-            text += f"• `/очистить @user` — очистить варны\n"
-            text += f"• `/giveadmin @user уровень` — выдать админку\n"
+            text += f"• `/бан @user причина`\n"
+            text += f"• `/очистить @user`\n"
+            text += f"• `/giveadmin @user уровень`\n"
+        if level >= 4:
+            text += f"• `/setupoperator`\n"
+            text += f"• `/setowner`\n"
     
     m = await msg.answer(text, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 60))
@@ -335,9 +418,9 @@ async def give_admin(msg: types.Message):
         pass
 
 # ============================================================
-# === КОМАНДА /setup_operator ===
+# === КОМАНДА /setupoperator ===
 # ============================================================
-@dp.message(Command("setup_operator"))
+@dp.message(Command("setupoperator"))
 async def setup_operator_cmd(msg: types.Message):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
@@ -347,8 +430,8 @@ async def setup_operator_cmd(msg: types.Message):
         asyncio.create_task(delete_after(m, 10))
         return
     
-    if level < 3:
-        m = await msg.answer("⛔ Нужен уровень 3+!")
+    if level < 4:
+        m = await msg.answer("⛔ Нужен уровень 4+!")
         asyncio.create_task(delete_after(m, 10))
         return
     
@@ -359,9 +442,9 @@ async def setup_operator_cmd(msg: types.Message):
     asyncio.create_task(delete_after(m, 30))
 
 # ============================================================
-# === КОМАНДА /set_owner ===
+# === КОМАНДА /setowner ===
 # ============================================================
-@dp.message(Command("set_owner"))
+@dp.message(Command("setowner"))
 async def set_owner_cmd(msg: types.Message):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
@@ -371,8 +454,8 @@ async def set_owner_cmd(msg: types.Message):
         asyncio.create_task(delete_after(m, 10))
         return
     
-    if level < 3:
-        m = await msg.answer("⛔ Нужен уровень 3+!")
+    if level < 4:
+        m = await msg.answer("⛔ Нужен уровень 4+!")
         asyncio.create_task(delete_after(m, 10))
         return
     
@@ -391,7 +474,8 @@ async def start(msg: types.Message):
         "☀️ *Бот-модератор*\n\n"
         "✅ Мат разрешён\n"
         "🚫 Угрозы и насилие блокируются\n"
-        "⚠️ 10 варнов = мут 5-30 минут\n\n"
+        "⚠️ 10 варнов = мут 5-30 минут\n"
+        "🛍️ /shop — магазин\n\n"
         "📌 *Команды:*\n"
         "👑 /admin — панель\n"
         "👤 /myrole — роль\n"
@@ -404,8 +488,9 @@ async def start(msg: types.Message):
         "/инфо @user\n"
         "/id @user — узнать ID\n"
         "/giveadmin @user уровень — выдать админку\n"
-        "/setup_operator — назначить оператора\n"
-        "/set_owner — назначить главу канала",
+        "/setupoperator — назначить оператора\n"
+        "/setowner — назначить главу канала\n"
+        "/shop — магазин",
         parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(m, 60))
@@ -717,7 +802,6 @@ async def cmd_info(msg: types.Message):
     stats = await get_user_stats(target_id, msg.chat.id)
     username = await get_username_by_id(target_id)
     
-    # Получаем логи по пользователю
     logs = []
     async with aiosqlite.connect("bot.db") as db:
         cursor = await db.execute(
@@ -754,7 +838,6 @@ async def cmd_info(msg: types.Message):
     report += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     
-    # Кнопка "Полная статистика" для админов
     keyboard = None
     if await get_user_level(user_id) >= 3:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -764,9 +847,6 @@ async def cmd_info(msg: types.Message):
     m = await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
     asyncio.create_task(delete_after(m, 60))
 
-# ============================================================
-# === КОМАНДА /stats ===
-# ============================================================
 @dp.message(Command("stats"))
 async def show_stats(msg: types.Message):
     user_id = msg.from_user.id
@@ -791,7 +871,7 @@ async def show_stats(msg: types.Message):
     asyncio.create_task(delete_after(m, 30))
 
 # ============================================================
-# === ОБРАБОТКА КНОПКИ "Полная статистика" ===
+# === КНОПКА "Полная статистика" ===
 # ============================================================
 @dp.callback_query(F.data.startswith("full_stats_"))
 async def full_stats_callback(call: types.CallbackQuery):
@@ -805,7 +885,6 @@ async def full_stats_callback(call: types.CallbackQuery):
     stats = await get_user_stats(target_id, call.message.chat.id)
     username = await get_username_by_id(target_id)
     
-    # Получаем все логи
     logs = []
     async with aiosqlite.connect("bot.db") as db:
         cursor = await db.execute(
@@ -845,8 +924,9 @@ async def full_stats_callback(call: types.CallbackQuery):
     m = await call.message.answer(report, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 60))
     await call.answer("📊 Полная статистика загружена!")
-    # ============================================================
-# === ОБРАБОТКА КНОПОК (ПРОДОЛЖЕНИЕ) ===
+
+# ============================================================
+# === ОБРАБОТКА КНОПОК ===
 # ============================================================
 @dp.callback_query()
 async def handle_callbacks(call: types.CallbackQuery):
@@ -859,7 +939,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer("Закрыто")
         return
 
-    # === НАСТРОЙКИ ===
     if data.startswith("sett_"):
         action = data.split("_")[1]
         chat_id = call.message.chat.id
@@ -915,7 +994,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer("⛔ Нет прав!", True)
         return
 
-    # === ЛОГИ ===
     if data == "admin_logs":
         logs = await get_admin_logs(30)
         if not logs:
@@ -938,7 +1016,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer()
         return
 
-    # === СПИСОК ОПЕРАТОРОВ ===
     if data == "admin_list_operators":
         ops = await get_all_channel_operators()
         if not ops:
@@ -958,7 +1035,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer()
         return
 
-    # === СТАТИСТИКА ===
     if data == "admin_stats":
         violations = await get_violations_stats(call.message.chat.id, 10)
         if not violations:
@@ -975,7 +1051,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer()
         return
 
-    # === УПРАВЛЕНИЕ ССЫЛКАМИ ===
     if data == "admin_manage_links":
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📋 Список белого списка", callback_data="admin_show_whitelist")],
@@ -1014,7 +1089,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer()
         return
 
-    # === ОСТАЛЬНЫЕ АДМИН-КОМАНДЫ ===
     if data in ["admin_warn", "admin_mute", "admin_unmute", "admin_clear_warns", "admin_check_warns", "admin_set_moderator", "admin_set_admin", "admin_set_level"]:
         action_name = data.replace("admin_", "")
         m = await call.message.answer(f"📝 Введи ID или @username для: {action_name}")
@@ -1051,10 +1125,6 @@ async def handle_callbacks(call: types.CallbackQuery):
         await call.answer()
         return
     
-    if data == "admin_logs":
-        await admin_logs_callback(call)
-        return
-    
     await call.answer("✅")
 
 # ============================================================
@@ -1076,7 +1146,6 @@ async def admin_input(msg: types.Message):
     if not action:
         return
     
-    # === НАСТРОЙКИ ===
     if action == "set_mute_duration":
         try:
             duration = int(text)
@@ -1107,7 +1176,6 @@ async def admin_input(msg: types.Message):
             asyncio.create_task(delete_after(m, 10))
         return
 
-    # === ПОЛУЧАЕМ ID ===
     target_id = await resolve_user(text, msg.chat.id)
     
     if not target_id:
@@ -1115,7 +1183,6 @@ async def admin_input(msg: types.Message):
         asyncio.create_task(delete_after(m, 10))
         return
 
-    # === СТАТИСТИКА ПОЛЬЗОВАТЕЛЯ ===
     if action == "user_stats":
         stats = await get_user_stats(target_id, msg.chat.id)
         username = await get_username_by_id(target_id)
@@ -1140,7 +1207,6 @@ async def admin_input(msg: types.Message):
         current_action[user_id] = None
         return
 
-    # === ОСТАЛЬНЫЕ ДЕЙСТВИЯ ===
     if action == "warn":
         await add_warning(target_id, msg.chat.id, "Нарушение", user_id)
         warns = await get_warnings(target_id, msg.chat.id)
@@ -1239,7 +1305,6 @@ async def admin_input(msg: types.Message):
             asyncio.create_task(delete_after(m, 10))
         return
 
-    # === НАСТРОЙКА ОПЕРАТОРА ===
     if action == "get_channel_for_operator":
         try:
             channel_id = int(text)
@@ -1265,7 +1330,6 @@ async def admin_input(msg: types.Message):
         asyncio.create_task(delete_after(m, 15))
         return
 
-    # === НАСТРОЙКА ГЛАВЫ ===
     if action == "get_channel_for_owner":
         try:
             channel_id = int(text)
@@ -1291,7 +1355,6 @@ async def admin_input(msg: types.Message):
         asyncio.create_task(delete_after(m, 15))
         return
 
-    # === БЕЛЫЙ СПИСОК ===
     if action == "add_whitelist":
         domain = text.lower()
         domain = re.sub(r'^https?://', '', domain)
@@ -1336,7 +1399,6 @@ async def filter_msg(msg: types.Message):
     text = msg.text or ""
     has_photo = bool(msg.photo or msg.video)
 
-    # Проверка запрещённых слов (18+)
     found, word = has_forbidden(text)
     if found:
         await msg.delete()
@@ -1426,12 +1488,10 @@ async def filter_channel_posts(msg: types.Message):
 async def background_tasks():
     while True:
         try:
-            # Авто-снятие варнов (старше 7 дней)
             async with aiosqlite.connect("bot.db") as db:
                 await db.execute("DELETE FROM warnings WHERE date < datetime('now', '-7 day')")
                 await db.commit()
             
-            # Уведомления о снятии мута
             async with aiosqlite.connect("bot.db") as db:
                 cursor = await db.execute(
                     "SELECT user_id, until FROM mutes WHERE until <= ? AND until > ?",
