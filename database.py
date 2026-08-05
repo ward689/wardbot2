@@ -139,7 +139,6 @@ async def add_warning(user_id, chat_id, reason, admin_id=0):
     settings = await get_channel_settings(chat_id)
     warns = await get_warnings(user_id, chat_id)
     if warns >= settings["warn_limit"]:
-        # Рандомный мут от 5 до 30 минут
         mute_duration = random.randint(300, 1800)
         await add_mute(user_id, mute_duration)
         return True, mute_duration
