@@ -119,7 +119,6 @@ async def init_db():
             )
         """)
         
-        # === НОВЫЕ ТАБЛИЦЫ ===
         await db.execute("""
             CREATE TABLE IF NOT EXISTS stars (
                 user_id INTEGER PRIMARY KEY,
