@@ -177,11 +177,11 @@ async def shop_cmd(msg: types.Message):
     user_id = msg.from_user.id
     user_username = await get_username_by_id(user_id)
     
-    # Список известных чатов (ЗАМЕНИ НА СВОИ!)
+    # ТВОИ ЧАТЫ
     known_chats = [
-        (-1004483077304, "anon chat"),
-        (-1004523675640, "ришон чатик"),
-        (-1004623675640, "Анон кармиэль чат"),
+        (-1003018474298, "анон чат"),
+        (-1003881455978, "ришон чатик"),
+        (-1003704771166, "анон кармиэль чат"),
     ]
     
     chat_buttons = []
@@ -197,27 +197,6 @@ async def shop_cmd(msg: types.Message):
                 )])
         except:
             pass
-    
-    # Пытаемся получить чаты из базы
-    try:
-        async with aiosqlite.connect("bot.db") as db:
-            cursor = await db.execute(
-                "SELECT DISTINCT chat_id FROM channel_settings"
-            )
-            chats = await cursor.fetchall()
-            for chat_id in chats:
-                try:
-                    chat = await bot.get_chat(chat_id[0])
-                    if chat and chat.id not in [c[0] for c in known_chats]:
-                        chat_name = chat.title or str(chat_id[0])
-                        chat_buttons.append([InlineKeyboardButton(
-                            text=f"📢 {chat_name[:30]}",
-                            callback_data=f"shop_select_chat_{chat_id[0]}"
-                        )])
-                except:
-                    pass
-    except:
-        pass
     
     # Если чатов нет — добавляем заглушку
     if not chat_buttons:
@@ -235,8 +214,7 @@ async def shop_cmd(msg: types.Message):
         f"🛍️ **Магазин**\n\n"
         f"👤 Пользователь: {user_username}\n"
         f"💰 Баланс: {await get_karma(user_id)} монет\n\n"
-        f"📌 **Выбери чат, в котором хочешь совершить покупку:**\n\n"
-        f"ℹ️ Если твоего чата нет в списке — бот должен быть админом в нём",
+        f"📌 **Выбери чат, в котором хочешь совершить покупку:**",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
