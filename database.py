@@ -119,6 +119,25 @@ async def init_db():
             )
         """)
         
+        # === НОВЫЕ ТАБЛИЦЫ ===
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS stars (
+                user_id INTEGER PRIMARY KEY,
+                stars INTEGER DEFAULT 0
+            )
+        """)
+        
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS auto_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                keyword TEXT,
+                response TEXT,
+                created_by INTEGER,
+                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         await db.commit()
     
     from config import WHITELIST_DOMAINS
@@ -130,6 +149,7 @@ async def init_db():
                 pass
         await db.commit()
 
+# === ВАРНЫ ===
 async def add_warning(user_id, chat_id, reason, admin_id=0):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO warnings (user_id, chat_id, reason, admin_id) VALUES (?, ?, ?, ?)", (user_id, chat_id, reason, admin_id))
@@ -160,6 +180,7 @@ async def get_user_warnings_details(user_id, chat_id):
         cursor = await db.execute("SELECT reason, admin_id, date FROM warnings WHERE user_id = ? AND chat_id = ? ORDER BY date DESC", (user_id, chat_id))
         return await cursor.fetchall()
 
+# === МУТЫ ===
 async def add_mute(user_id, duration):
     until = int(time.time()) + duration
     async with aiosqlite.connect(DB_NAME) as db:
@@ -185,6 +206,7 @@ async def get_mute_until(user_id):
         result = await cursor.fetchone()
         return result[0] if result else 0
 
+# === РОЛИ ===
 async def set_user_level(user_id: int, level: int):
     from config import ADMIN_LEVELS
     role_name = ADMIN_LEVELS.get(level, {}).get("name", "Участник")
@@ -253,6 +275,15 @@ async def get_admin_logs(limit: int = 50):
         )
         return await cursor.fetchall()
 
+async def get_admin_logs_by_user(user_id: int, limit: int = 50):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT admin_id, admin_name, action, target_id, target_name, details, date FROM admin_logs WHERE admin_id = ? OR target_id = ? ORDER BY date DESC LIMIT ?",
+            (user_id, user_id, limit)
+        )
+        return await cursor.fetchall()
+
+# === КАРМА ===
 async def add_karma(user_id: int, amount: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO karma (user_id, karma) VALUES (?, COALESCE((SELECT karma FROM karma WHERE user_id = ?), 0) + ?)", (user_id, user_id, amount))
@@ -264,6 +295,31 @@ async def get_karma(user_id: int) -> int:
         result = await cursor.fetchone()
         return result[0] if result else 0
 
+# === ЗВЁЗДЫ ===
+async def get_user_stars(user_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT stars FROM stars WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        return result[0] if result else 0
+
+async def add_stars(user_id: int, amount: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO stars (user_id, stars) VALUES (?, COALESCE((SELECT stars FROM stars WHERE user_id = ?), 0) + ?)",
+            (user_id, user_id, amount)
+        )
+        await db.commit()
+
+async def remove_stars(user_id: int, amount: int):
+    current = await get_user_stars(user_id)
+    if current < amount:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE stars SET stars = stars - ? WHERE user_id = ?", (amount, user_id))
+        await db.commit()
+    return True
+
+# === СТАТИСТИКА ===
 async def add_violation(user_id: int, chat_id: int, type: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO violations (user_id, chat_id, type) VALUES (?, ?, ?)", (user_id, chat_id, type))
@@ -285,6 +341,7 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
         mute_until = await get_mute_until(user_id) if is_muted_flag else 0
         level = await get_user_level(user_id)
         role = await get_user_role(user_id)
+        stars = await get_user_stars(user_id)
         return {
             "violations": violations,
             "warns": warns,
@@ -292,9 +349,11 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
             "is_muted": is_muted_flag,
             "mute_until": mute_until,
             "level": level,
-            "role": role
+            "role": role,
+            "stars": stars
         }
 
+# === ДЕЙЛИ ===
 async def get_daily_bonus(user_id: int) -> tuple:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
@@ -319,6 +378,7 @@ async def claim_daily(user_id: int):
         await db.commit()
     return streak
 
+# === ОПЕРАТОРЫ ===
 async def set_channel_operator(channel_id: int, operator_id: int, operator_username: str = "", channel_name: str = ""):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR REPLACE INTO channel_operators (channel_id, operator_id, operator_username, channel_name) VALUES (?, ?, ?, ?)", (channel_id, operator_id, operator_username, channel_name))
@@ -355,6 +415,7 @@ async def get_channel_owner(channel_id: int) -> dict:
             return {"owner_id": result[0], "owner_username": result[1]}
         return None
 
+# === БЕЛЫЙ СПИСОК ===
 async def add_whitelist_domain(domain: str, added_by: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, added_by))
@@ -375,6 +436,7 @@ async def is_domain_whitelisted(domain: str) -> bool:
         cursor = await db.execute("SELECT 1 FROM whitelist WHERE domain = ?", (domain,))
         return await cursor.fetchone() is not None
 
+# === НАСТРОЙКИ ===
 async def get_channel_settings(channel_id: int) -> dict:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT enabled, mute_duration, warn_limit, block_new_accounts, min_account_age, log_enabled FROM channel_settings WHERE channel_id = ?", (channel_id,))
@@ -414,3 +476,42 @@ async def update_channel_settings(channel_id: int, settings: dict):
             )
         )
         await db.commit()
+
+# === АВТО-ОТВЕТЫ ===
+async def add_auto_response(chat_id: int, keyword: str, response: str, created_by: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO auto_responses (chat_id, keyword, response, created_by) VALUES (?, ?, ?, ?)",
+            (chat_id, keyword.lower(), response, created_by)
+        )
+        await db.commit()
+
+async def remove_auto_response(chat_id: int, keyword: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "DELETE FROM auto_responses WHERE chat_id = ? AND keyword = ?",
+            (chat_id, keyword.lower())
+        )
+        await db.commit()
+
+async def get_auto_response(chat_id: int, keyword: str) -> str:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT response FROM auto_responses WHERE chat_id = ? AND keyword = ?",
+            (chat_id, keyword.lower())
+        )
+        result = await cursor.fetchone()
+        return result[0] if result else None
+
+async def get_all_auto_responses(chat_id: int) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT keyword, response, date FROM auto_responses WHERE chat_id = ? ORDER BY date DESC",
+            (chat_id,)
+        )
+        return await cursor.fetchall()
+
+async def get_all_chats_with_auto_responses() -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT DISTINCT chat_id FROM auto_responses")
+        return [row[0] for row in await cursor.fetchall()]
