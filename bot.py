@@ -6,7 +6,7 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS
+from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, STARS_PRICES, STARS_PACKAGES
 from database import *
 from aiohttp import web
 
@@ -170,14 +170,105 @@ async def get_admin_keyboard(user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
+# === КОМАНДА START ===
+# ============================================================
+@dp.message(Command("start"))
+async def start(msg: types.Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📜 Ознакомиться с политикой бота", callback_data="policy")]
+    ])
+    
+    m = await msg.answer(
+        "☀️ *Бот-модератор*\n\n"
+        "✅ Мат разрешён\n"
+        "🚫 Угрозы и насилие блокируются\n"
+        "⚠️ 10 варнов = мут 5-30 минут\n"
+        "🛍️ /shop — магазин\n"
+        "⭐ /stars — звёзды\n"
+        "💰 /buy_stars — купить звёзды\n\n"
+        "📌 *Команды:*\n"
+        "👑 /admin — панель\n"
+        "👤 /myrole — роль\n"
+        "🎁 /daily — бонус\n"
+        "/мут @user 24ч причина\n"
+        "/размут @user\n"
+        "/варн @user причина\n"
+        "/бан @user причина\n"
+        "/кик @user причина\n"
+        "/инфо @user\n"
+        "/id @user — узнать ID\n"
+        "/shop — магазин\n"
+        "/add_response — добавить авто-ответ (ЛС)\n"
+        "/list_responses — список авто-ответов (ЛС)\n"
+        "/remove_response — удалить авто-ответ (ЛС)",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    asyncio.create_task(delete_after(m, 60))
+
+# ============================================================
+# === ПОЛИТИКА ===
+# ============================================================
+@dp.callback_query(F.data == "policy")
+async def policy_callback(call: types.CallbackQuery):
+    await call.answer()
+    await call.message.answer(
+        "📜 **Политика бота-модератора**\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "**1. Общие положения**\n"
+        "Бот создан для поддержания порядка в чатах и каналах.\n\n"
+        
+        "**2. Запрещённый контент**\n"
+        "🚫 Угрозы и насилие\n"
+        "🚫 Терроризм и экстремизм\n"
+        "🚫 Наркотики и пропаганда наркотиков\n"
+        "🚫 Мат с фото запрещён\n\n"
+        
+        "**3. Система наказаний**\n"
+        "⚠️ 1 варн — предупреждение\n"
+        "⚠️ 3 варна — мут 5-30 минут\n"
+        "🔒 Мут — ограничение на отправку сообщений\n"
+        "🚫 Бан — 30 дней\n\n"
+        
+        "**4. Магазин**\n"
+        "🪙 Снять варн — 500 монет / 10 ⭐\n"
+        "🔓 Снять мут — 1000 монет / 20 ⭐\n"
+        "🔄 Разбан — 2500 монет / 50 ⭐\n"
+        "🔗 Одноразовая ссылка — 150 монет\n\n"
+        
+        "**5. Получение монет**\n"
+        "🎁 Ежедневный бонус — `/daily`\n"
+        "💰 Выдача админом — `/givemoney 1000`\n\n"
+        
+        "**6. Авто-ответы**\n"
+        "Настраиваются в ЛС командами:\n"
+        "📝 /add_response\n"
+        "📋 /list_responses\n"
+        "🗑️ /remove_response\n\n"
+        
+        "**7. Администрация**\n"
+        "👑 Главный администратор имеет полный доступ\n"
+        "🔴 Администратор — может выдавать админку\n"
+        "🟠 Модератор — может мутить и варнить\n"
+        "🟢 Наблюдатель — может выдавать варны\n\n"
+        
+        "**8. Контакты**\n"
+        "По всем вопросам обращайтесь к главному администратору.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌴 *Соблюдайте правила и будьте вежливы!*",
+        parse_mode="Markdown"
+    )
+
+# ============================================================
 # === МАГАЗИН С ВЫБОРОМ ЧАТА ===
 # ============================================================
 @dp.message(Command("shop"))
 async def shop_cmd(msg: types.Message):
     user_id = msg.from_user.id
     user_username = await get_username_by_id(user_id)
+    karma = await get_karma(user_id)
+    stars = await get_user_stars(user_id)
     
-    # ТВОИ ЧАТЫ
     known_chats = [
         (-1003018474298, "анон чат"),
         (-1003881455978, "ришон чатик"),
@@ -185,7 +276,6 @@ async def shop_cmd(msg: types.Message):
     ]
     
     chat_buttons = []
-    
     for chat_id, chat_name in known_chats:
         try:
             chat = await bot.get_chat(chat_id)
@@ -211,7 +301,8 @@ async def shop_cmd(msg: types.Message):
     await msg.answer(
         f"🛍️ **Магазин**\n\n"
         f"👤 Пользователь: {user_username}\n"
-        f"💰 Баланс: {await get_karma(user_id)} монет\n\n"
+        f"💰 Баланс: {karma} монет\n"
+        f"⭐ Звёзды: {stars}\n\n"
         f"📌 **Выбери чат, в котором хочешь совершить покупку:**",
         reply_markup=keyboard,
         parse_mode="Markdown"
@@ -233,12 +324,16 @@ async def shop_select_chat(call: types.CallbackQuery):
     warns = await get_warnings(user_id, chat_id)
     is_muted_user = await is_muted(user_id)
     karma = await get_karma(user_id)
+    stars = await get_user_stars(user_id)
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
-        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
-        [InlineKeyboardButton(text="🔄 Разбан — 2500 монет", callback_data="shop_buy_unban")],
+        [InlineKeyboardButton(text="🪙 Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
+        [InlineKeyboardButton(text="🪙 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
+        [InlineKeyboardButton(text="🪙 Разбан — 2500 монет", callback_data="shop_buy_unban")],
         [InlineKeyboardButton(text="🔗 Одноразовая ссылка — 150 монет", callback_data="shop_buy_invite")],
+        [InlineKeyboardButton(text="⭐ Снять варн — 10 звёзд", callback_data="shop_buy_stars_clear_warn")],
+        [InlineKeyboardButton(text="⭐ Снять мут — 20 звёзд", callback_data="shop_buy_stars_clear_mute")],
+        [InlineKeyboardButton(text="⭐ Разбан — 50 звёзд", callback_data="shop_buy_stars_unban")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
     ])
@@ -255,12 +350,18 @@ async def shop_select_chat(call: types.CallbackQuery):
         f"🛍️ **Магазин**\n\n"
         f"📢 Чат: {chat_name}\n"
         f"👤 Пользователь: {await get_username_by_id(user_id)}\n"
-        f"💰 Баланс: {karma} монет{status_text}\n\n"
+        f"💰 Баланс: {karma} монет\n"
+        f"⭐ Звёзды: {stars}{status_text}\n\n"
         f"📌 **Доступные товары:**\n"
-        f"🗑️ Снять варн — 500 монет\n"
-        f"🔓 Снять мут — 1000 монет\n"
-        f"🔄 Разбан — 2500 монет\n"
-        f"🔗 Одноразовая ссылка — 150 монет\n\n"
+        f"🪙 За монеты:\n"
+        f"• Снять варн — 500 монет\n"
+        f"• Снять мут — 1000 монет\n"
+        f"• Разбан — 2500 монет\n"
+        f"• Одноразовая ссылка — 150 монет\n\n"
+        f"⭐ За звёзды:\n"
+        f"• Снять варн — 10 ⭐\n"
+        f"• Снять мут — 20 ⭐\n"
+        f"• Разбан — 50 ⭐\n\n"
         f"Выбери действие:",
         reply_markup=keyboard,
         parse_mode="Markdown"
@@ -376,6 +477,73 @@ async def shop_buy(call: types.CallbackQuery):
             await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
         return
     
+    # === ПОКУПКА ЗА ЗВЁЗДЫ ===
+    if action.startswith("stars_"):
+        action_type = action.replace("stars_", "")
+        
+        if action_type == "clear_warn":
+            stars_needed = STARS_PRICES.get("clear_warn", 10)
+            stars = await get_user_stars(user_id)
+            if stars < stars_needed:
+                await call.answer(f"❌ Недостаточно звёзд! Нужно {stars_needed} ⭐", show_alert=True)
+                return
+            warns = await get_warnings(user_id, chat_id)
+            if warns == 0:
+                await call.answer("❌ У тебя нет варнов!", show_alert=True)
+                return
+            await clear_warnings(user_id, chat_id)
+            await remove_stars(user_id, stars_needed)
+            await call.answer(f"✅ Варны сняты! -{stars_needed} ⭐", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Варны сняты за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"⭐ Остаток звёзд: {await get_user_stars(user_id)}\n"
+                f"🛍️ Для покупок используй /shop",
+                parse_mode="Markdown"
+            )
+            return
+        
+        if action_type == "clear_mute":
+            stars_needed = STARS_PRICES.get("clear_mute", 20)
+            stars = await get_user_stars(user_id)
+            if stars < stars_needed:
+                await call.answer(f"❌ Недостаточно звёзд! Нужно {stars_needed} ⭐", show_alert=True)
+                return
+            if not await is_muted(user_id):
+                await call.answer("❌ Ты не в муте!", show_alert=True)
+                return
+            await remove_mute(user_id)
+            await remove_stars(user_id, stars_needed)
+            await call.answer(f"✅ Мут снят! -{stars_needed} ⭐", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Мут снят за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"⭐ Остаток звёзд: {await get_user_stars(user_id)}\n"
+                f"🛍️ Для покупок используй /shop",
+                parse_mode="Markdown"
+            )
+            return
+        
+        if action_type == "unban":
+            stars_needed = STARS_PRICES.get("unban", 50)
+            stars = await get_user_stars(user_id)
+            if stars < stars_needed:
+                await call.answer(f"❌ Недостаточно звёзд! Нужно {stars_needed} ⭐", show_alert=True)
+                return
+            if await is_muted(user_id):
+                await remove_mute(user_id)
+            await clear_warnings(user_id, chat_id)
+            await remove_stars(user_id, stars_needed)
+            await call.answer(f"✅ Разбан выполнен! -{stars_needed} ⭐", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Разбан за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"⭐ Остаток звёзд: {await get_user_stars(user_id)}\n"
+                f"🛍️ Для покупок используй /shop",
+                parse_mode="Markdown"
+            )
+            return
+    
     await call.answer("❌ Неизвестное действие")
 
 @dp.callback_query(F.data == "shop_close")
@@ -384,83 +552,268 @@ async def shop_close(call: types.CallbackQuery):
     await call.answer("🛍️ Магазин закрыт")
 
 # ============================================================
-# === КОМАНДА START С КНОПКОЙ ПОЛИТИКИ ===
+# === ЗВЁЗДЫ ===
 # ============================================================
-@dp.message(Command("start"))
-async def start(msg: types.Message):
+@dp.message(Command("stars"))
+async def check_stars(msg: types.Message):
+    user_id = msg.from_user.id
+    stars = await get_user_stars(user_id)
+    karma = await get_karma(user_id)
+    await msg.answer(
+        f"⭐ **Твои звёзды**\n\n"
+        f"⭐ Звёзд: {stars}\n"
+        f"💰 Монет: {karma}\n\n"
+        f"📌 Для покупки звёзд используй `/buy_stars`",
+        parse_mode="Markdown"
+    )
+
+@dp.message(Command("buy_stars"))
+async def buy_stars_cmd(msg: types.Message):
+    user_id = msg.from_user.id
+    karma = await get_karma(user_id)
+    stars = await get_user_stars(user_id)
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📜 Ознакомиться с политикой бота", callback_data="policy")]
+        [InlineKeyboardButton(text="⭐ 10 звёзд — 100 монет", callback_data="buy_stars_10")],
+        [InlineKeyboardButton(text="⭐ 50 звёзд — 400 монет", callback_data="buy_stars_50")],
+        [InlineKeyboardButton(text="⭐ 100 звёзд — 700 монет", callback_data="buy_stars_100")],
+        [InlineKeyboardButton(text="⭐ 500 звёзд — 3000 монет", callback_data="buy_stars_500")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="buy_stars_close")]
     ])
     
-    m = await msg.answer(
-        "☀️ *Бот-модератор*\n\n"
-        "✅ Мат разрешён\n"
-        "🚫 Угрозы и насилие блокируются\n"
-        "⚠️ 10 варнов = мут 5-30 минут\n"
-        "🛍️ /shop — магазин\n\n"
-        "📌 *Команды:*\n"
-        "👑 /admin — панель\n"
-        "👤 /myrole — роль\n"
-        "🎁 /daily — бонус\n"
-        "/мут @user 24ч причина\n"
-        "/размут @user\n"
-        "/варн @user причина\n"
-        "/бан @user причина\n"
-        "/кик @user причина\n"
-        "/инфо @user\n"
-        "/id @user — узнать ID\n"
-        "/shop — магазин",
+    await msg.answer(
+        f"⭐ **Купить звёзды**\n\n"
+        f"💰 Твой баланс: {karma} монет\n"
+        f"⭐ Твои звёзды: {stars}\n\n"
+        f"📌 **Выбери пакет:**",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
-    asyncio.create_task(delete_after(m, 60))
 
-# ============================================================
-# === КНОПКА ПОЛИТИКИ ===
-# ============================================================
-@dp.callback_query(F.data == "policy")
-async def policy_callback(call: types.CallbackQuery):
-    await call.answer()
-    await call.message.answer(
-        "📜 **Политика бота-модератора**\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "**1. Общие положения**\n"
-        "Бот создан для поддержания порядка в чатах и каналах.\n\n"
-        
-        "**2. Запрещённый контент**\n"
-        "🚫 Угрозы и насилие\n"
-        "🚫 Терроризм и экстремизм\n"
-        "🚫 Наркотики и пропаганда наркотиков\n"
-        "🚫 Мат с фото запрещён\n\n"
-        
-        "**3. Система наказаний**\n"
-        "⚠️ 1 варн — предупреждение\n"
-        "⚠️ 3 варна — мут 5-30 минут\n"
-        "🔒 Мут — ограничение на отправку сообщений\n"
-        "🚫 Бан — 30 дней\n\n"
-        
-        "**4. Магазин**\n"
-        "🛍️ Снять варн — 500 монет\n"
-        "🔓 Снять мут — 1000 монет\n"
-        "🔄 Разбан — 2500 монет\n"
-        "🔗 Одноразовая ссылка — 150 монет\n\n"
-        
-        "**5. Получение монет**\n"
-        "🎁 Ежедневный бонус — `/daily`\n"
-        "💰 Выдача админом — `/givemoney 1000`\n\n"
-        
-        "**6. Администрация**\n"
-        "👑 Главный администратор имеет полный доступ\n"
-        "🔴 Администратор — может выдавать админку\n"
-        "🟠 Модератор — может мутить и варнить\n"
-        "🟢 Наблюдатель — может выдавать варны\n\n"
-        
-        "**7. Контакты**\n"
-        "По всем вопросам обращайтесь к главному администратору.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🌴 *Соблюдайте правила и будьте вежливы!*",
+@dp.callback_query(F.data.startswith("buy_stars_"))
+async def buy_stars_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    amount = int(call.data.replace("buy_stars_", ""))
+    
+    price = STARS_PACKAGES.get(amount)
+    if not price:
+        await call.answer("❌ Неизвестный пакет!", show_alert=True)
+        return
+    
+    karma = await get_karma(user_id)
+    if karma < price:
+        await call.answer(f"❌ Недостаточно монет! Нужно {price}", show_alert=True)
+        return
+    
+    await add_karma(user_id, -price)
+    await add_stars(user_id, amount)
+    
+    await call.answer(f"✅ Куплено {amount} звёзд за {price} монет!", show_alert=True)
+    await call.message.edit_text(
+        f"⭐ **Покупка звёзд!**\n\n"
+        f"📌 Куплено: {amount} звёзд\n"
+        f"💰 Стоимость: {price} монет\n"
+        f"⭐ Всего звёзд: {await get_user_stars(user_id)}\n"
+        f"💰 Остаток монет: {await get_karma(user_id)}\n\n"
+        f"🛍️ Для покупок используй /shop",
         parse_mode="Markdown"
     )
+
+@dp.callback_query(F.data == "buy_stars_close")
+async def buy_stars_close(call: types.CallbackQuery):
+    await call.message.delete()
+    await call.answer("Закрыто")
+
+# ============================================================
+# === АВТО-ОТВЕТЫ (НАСТРОЙКА В ЛС) ===
+# ============================================================
+@dp.message(Command("add_response"))
+async def add_response_start(msg: types.Message):
+    user_id = msg.from_user.id
+    level = await get_user_level(user_id)
+    if level < 3:
+        await msg.answer("⛔ Нет прав!")
+        return
+    
+    if msg.chat.type != "private":
+        await msg.answer("❌ Эта команда работает только в ЛС!")
+        return
+    
+    global current_action
+    current_action[user_id] = "add_response_chat"
+    await msg.answer(
+        "📝 **Настройка авто-ответа**\n\n"
+        "Введи ID канала, для которого хочешь настроить авто-ответ:\n"
+        "Пример: `-1003018474298`"
+    )
+
+@dp.message(Command("list_responses"))
+async def list_responses(msg: types.Message):
+    user_id = msg.from_user.id
+    if msg.chat.type != "private":
+        await msg.answer("❌ Только в ЛС!")
+        return
+    
+    level = await get_user_level(user_id)
+    if level < 3:
+        await msg.answer("⛔ Нет прав!")
+        return
+    
+    chats = await get_all_chats_with_auto_responses()
+    if not chats:
+        await msg.answer("📋 Нет настроенных авто-ответов ни для одного канала.")
+        return
+    
+    text = "📋 **Каналы с авто-ответами:**\n\n"
+    for chat_id in chats:
+        try:
+            chat = await bot.get_chat(chat_id)
+            chat_name = chat.title or str(chat_id)
+        except:
+            chat_name = str(chat_id)
+        responses = await get_all_auto_responses(chat_id)
+        text += f"📢 {chat_name} (`{chat_id}`) — {len(responses)} правил\n"
+    
+    await msg.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("remove_response"))
+async def remove_response_start(msg: types.Message):
+    user_id = msg.from_user.id
+    if msg.chat.type != "private":
+        await msg.answer("❌ Только в ЛС!")
+        return
+    
+    level = await get_user_level(user_id)
+    if level < 3:
+        await msg.answer("⛔ Нет прав!")
+        return
+    
+    global current_action
+    current_action[user_id] = "remove_response_chat"
+    await msg.answer(
+        "📝 **Удаление авто-ответа**\n\n"
+        "Введи ID канала, из которого хочешь удалить авто-ответ:\n"
+        "Пример: `-1003018474298`"
+    )
+
+# ============================================================
+# === ОБРАБОТЧИКИ ВВОДА ДЛЯ АВТО-ОТВЕТОВ ===
+# ============================================================
+@dp.message()
+async def auto_response_input(msg: types.Message):
+    user_id = msg.from_user.id
+    action = current_action.get(user_id)
+    
+    if not action:
+        return
+    
+    if msg.chat.type != "private":
+        return
+    
+    if action == "add_response_chat":
+        try:
+            chat_id = int(msg.text.strip())
+            try:
+                chat = await bot.get_chat(chat_id)
+                if chat:
+                    current_action[user_id] = "add_response_keyword"
+                    target_user[user_id] = chat_id
+                    await msg.answer(
+                        f"✅ Канал `{chat_id}` выбран!\n\n"
+                        f"📝 Введи **ключевое слово**, на которое будет отвечать бот:\n"
+                        f"Пример: `привет`, `правила`, `как дела`"
+                    )
+                else:
+                    await msg.answer("❌ Бот не найден в этом канале!")
+            except:
+                await msg.answer("❌ Бот не найден в этом канале!")
+        except ValueError:
+            await msg.answer("❌ Введи корректный ID канала!")
+        return
+    
+    if action == "add_response_keyword":
+        keyword = msg.text.strip().lower()
+        if not keyword:
+            await msg.answer("❌ Введи ключевое слово!")
+            return
+        current_action[user_id] = "add_response_text"
+        target_user[user_id] = {"chat": target_user.get(user_id), "keyword": keyword}
+        await msg.answer(
+            f"📝 Ключевое слово: `{keyword}`\n\n"
+            f"Теперь введи **текст ответа**, который будет отправлять бот:\n"
+            f"Можно использовать Markdown"
+        )
+        return
+    
+    if action == "add_response_text":
+        response = msg.text.strip()
+        if not response:
+            await msg.answer("❌ Введи текст ответа!")
+            return
+        data = target_user.get(user_id)
+        if isinstance(data, dict):
+            chat_id = data.get("chat")
+            keyword = data.get("keyword")
+        else:
+            chat_id = data
+            keyword = ""
+        
+        await add_auto_response(chat_id, keyword, response, user_id)
+        await msg.answer(
+            f"✅ **Авто-ответ добавлен!**\n\n"
+            f"📢 Канал: `{chat_id}`\n"
+            f"🔑 Ключевое слово: `{keyword}`\n"
+            f"📝 Ответ: {response[:100]}...\n\n"
+            f"Для просмотра всех ответов используй `/list_responses`"
+        )
+        current_action[user_id] = None
+        target_user[user_id] = None
+        return
+    
+    if action == "remove_response_chat":
+        try:
+            chat_id = int(msg.text.strip())
+            responses = await get_all_auto_responses(chat_id)
+            if not responses:
+                await msg.answer(f"📋 В канале `{chat_id}` нет авто-ответов!")
+                return
+            
+            text = f"📋 **Авто-ответы в канале `{chat_id}`:**\n\n"
+            for keyword, response, date in responses:
+                text += f"• `{keyword}` → {response[:50]}...\n"
+            text += f"\n📝 Введи **ключевое слово**, которое хочешь удалить:"
+            
+            current_action[user_id] = "remove_response_keyword"
+            target_user[user_id] = chat_id
+            await msg.answer(text, parse_mode="Markdown")
+        except ValueError:
+            await msg.answer("❌ Введи корректный ID канала!")
+        return
+    
+    if action == "remove_response_keyword":
+        keyword = msg.text.strip().lower()
+        chat_id = target_user.get(user_id)
+        await remove_auto_response(chat_id, keyword)
+        await msg.answer(f"✅ Авто-ответ на `{keyword}` удалён!")
+        current_action[user_id] = None
+        target_user[user_id] = None
+        return
+
+# ============================================================
+# === ФИЛЬТР АВТО-ОТВЕТОВ В ЧАТАХ ===
+# ============================================================
+@dp.message(F.text)
+async def auto_response_filter(msg: types.Message):
+    # Проверяем, есть ли авто-ответы для этого чата
+    responses = await get_all_auto_responses(msg.chat.id)
+    if not responses:
+        return
+    
+    text = msg.text.lower()
+    for keyword, response, date in responses:
+        if keyword in text:
+            await msg.answer(response)
+            break
 
 # ============================================================
 # === КОМАНДА /id ===
@@ -507,6 +860,7 @@ async def my_role(msg: types.Message):
     level = await get_user_level(msg.from_user.id)
     role = await get_user_role(msg.from_user.id)
     karma = await get_karma(msg.from_user.id)
+    stars = await get_user_stars(msg.from_user.id)
     
     ops = []
     async with aiosqlite.connect("bot.db") as db:
@@ -522,6 +876,7 @@ async def my_role(msg: types.Message):
     text += f"📊 Уровень: {level}\n"
     text += f"👑 Роль: {role}\n"
     text += f"⭐ Карма: {karma}\n"
+    text += f"⭐ Звёзды: {stars}\n"
     
     if ops:
         text += "\n📢 **Ты оператор каналов:**\n"
@@ -537,6 +892,7 @@ async def my_role(msg: types.Message):
         text += f"\n💡 Ты участник. Доступны команды:\n"
         text += f"• `/daily` — бонус\n"
         text += f"• `/shop` — магазин\n"
+        text += f"• `/stars` — звёзды\n"
         text += f"• `/myrole` — эта команда\n"
     else:
         text += f"\n🔧 Доступные команды:\n"
@@ -550,6 +906,9 @@ async def my_role(msg: types.Message):
             text += f"• `/бан @user причина`\n"
             text += f"• `/очистить @user`\n"
             text += f"• `/giveadmin @user уровень`\n"
+            text += f"• `/add_response`\n"
+            text += f"• `/list_responses`\n"
+            text += f"• `/remove_response`\n"
         if level >= 4:
             text += f"• `/setupoperator`\n"
             text += f"• `/setowner`\n"
@@ -716,7 +1075,6 @@ async def give_money(msg: types.Message):
     
     try:
         count = 0
-        # Пытаемся получить ВСЕХ участников через get_chat_members с пагинацией
         try:
             offset = 0
             limit = 100
@@ -735,7 +1093,6 @@ async def give_money(msg: types.Message):
                     break
         except Exception as e:
             print(f"Ошибка при выдаче участникам: {e}")
-            # Если не работает, выдаём хотя бы админам
             admins = await bot.get_chat_administrators(chat_id)
             for admin in admins:
                 try:
@@ -1094,7 +1451,8 @@ async def cmd_info(msg: types.Message):
         f"📌 **Общая информация:**\n"
         f"• 👑 Роль: {stats['role']}\n"
         f"• 📊 Уровень: {stats['level']}\n"
-        f"• ⭐ Карма: {stats['karma']}\n\n"
+        f"• ⭐ Карма: {stats['karma']}\n"
+        f"• ⭐ Звёзды: {stats.get('stars', 0)}\n\n"
         f"⚠️ **Нарушения:**\n"
         f"• 🚫 Всего нарушений: {stats['violations']}\n"
         f"• ⚠️ Варнов: {stats['warns']}\n"
@@ -1145,61 +1503,6 @@ async def show_stats(msg: types.Message):
     
     m = await msg.answer(text, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 30))
-
-# ============================================================
-# === КНОПКА "Полная статистика" ===
-# ============================================================
-@dp.callback_query(F.data.startswith("full_stats_"))
-async def full_stats_callback(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    level = await get_user_level(user_id)
-    if level < 3:
-        await call.answer("⛔ Нет прав!", True)
-        return
-    
-    target_id = int(call.data.split("_")[2])
-    stats = await get_user_stats(target_id, call.message.chat.id)
-    username = await get_username_by_id(target_id)
-    
-    logs = []
-    async with aiosqlite.connect("bot.db") as db:
-        cursor = await db.execute(
-            "SELECT admin_name, action, target_name, details, date FROM admin_logs WHERE target_id = ? OR admin_id = ? ORDER BY date DESC",
-            (target_id, target_id)
-        )
-        logs = await cursor.fetchall()
-    
-    report = (
-        f"📊 **ПОЛНАЯ СТАТИСТИКА**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 Пользователь: {username}\n"
-        f"🆔 ID: `{target_id}`\n\n"
-        f"📌 **Общая информация:**\n"
-        f"• 👑 Роль: {stats['role']}\n"
-        f"• 📊 Уровень: {stats['level']}\n"
-        f"• ⭐ Карма: {stats['karma']}\n\n"
-        f"⚠️ **Нарушения:**\n"
-        f"• 🚫 Всего нарушений: {stats['violations']}\n"
-        f"• ⚠️ Варнов: {stats['warns']}\n"
-        f"{'🔴 В муте' if stats['is_muted'] else '🟢 Не в муте'}\n\n"
-    )
-    
-    if logs:
-        report += f"📋 **ВСЕ ДЕЙСТВИЯ:**\n"
-        for admin_name, action, target_name, details, date in logs[:20]:
-            report += f"• {admin_name} {action}"
-            if target_name:
-                report += f" → {target_name}"
-            if details:
-                report += f" ({details})"
-            report += f"\n  🕐 {date[:16]}\n"
-    
-    report += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    report += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-    
-    m = await call.message.answer(report, parse_mode="Markdown")
-    asyncio.create_task(delete_after(m, 60))
-    await call.answer("📊 Полная статистика загружена!")
 
 # ============================================================
 # === ОБРАБОТКА КНОПОК ===
@@ -1470,7 +1773,8 @@ async def admin_input(msg: types.Message):
             f"📌 **Общая информация:**\n"
             f"• 👑 Роль: {stats['role']}\n"
             f"• 📊 Уровень: {stats['level']}\n"
-            f"• ⭐ Карма: {stats['karma']}\n\n"
+            f"• ⭐ Карма: {stats['karma']}\n"
+            f"• ⭐ Звёзды: {stats.get('stars', 0)}\n\n"
             f"⚠️ **Нарушения:**\n"
             f"• 🚫 Всего нарушений: {stats['violations']}\n"
             f"• ⚠️ Варнов: {stats['warns']}\n"
