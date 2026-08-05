@@ -169,7 +169,7 @@ async def get_admin_keyboard(user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
-# === МАГАЗИН (shop) ===
+# === КОМАНДА /shop ===
 # ============================================================
 @dp.message(Command("shop"))
 async def shop_cmd(msg: types.Message):
@@ -209,14 +209,10 @@ async def shop_callback(call: types.CallbackQuery):
         if karma < 500:
             await call.answer("❌ Недостаточно монет! Нужно 500", show_alert=True)
             return
-        
-        # Проверяем, есть ли варны
         warns = await get_warnings(user_id, call.message.chat.id)
         if warns == 0:
             await call.answer("❌ У тебя нет варнов!", show_alert=True)
             return
-        
-        # Снимаем варны
         await clear_warnings(user_id, call.message.chat.id)
         await add_karma(user_id, -500)
         await call.answer("✅ Варны сняты! -500 монет", show_alert=True)
@@ -232,12 +228,9 @@ async def shop_callback(call: types.CallbackQuery):
         if karma < 1000:
             await call.answer("❌ Недостаточно монет! Нужно 1000", show_alert=True)
             return
-        
         if not await is_muted(user_id):
             await call.answer("❌ Ты не в муте!", show_alert=True)
             return
-        
-        # Снимаем мут
         await remove_mute(user_id)
         await add_karma(user_id, -1000)
         await call.answer("✅ Мут снят! -1000 монет", show_alert=True)
@@ -250,6 +243,89 @@ async def shop_callback(call: types.CallbackQuery):
         return
     
     await call.answer("❌ Неизвестное действие")
+
+# ============================================================
+# === КОМАНДА /givemoney (ТОЛЬКО ДЛЯ ОВНЕРА) ===
+# ============================================================
+@dp.message(Command("givemoney"))
+async def give_money(msg: types.Message):
+    user_id = msg.from_user.id
+    level = await get_user_level(user_id)
+    
+    # Только для овнера (уровень 4 или ID в ADMIN_IDS)
+    if level < 4 and user_id not in ADMIN_IDS:
+        await msg.answer("⛔ Только главный администратор может выдавать монеты!")
+        return
+    
+    args = msg.text.split()
+    if len(args) < 2:
+        await msg.answer("📝 Использование: `/givemoney 1000` — выдаёт 1000 монет ВСЕМ в чате", parse_mode="Markdown")
+        return
+    
+    try:
+        amount = int(args[1])
+    except:
+        await msg.answer("❌ Введи число монет!")
+        return
+    
+    if amount <= 0:
+        await msg.answer("❌ Сумма должна быть больше 0!")
+        return
+    
+    if amount > 10000:
+        await msg.answer("❌ Нельзя выдать больше 10000 монет за раз!")
+        return
+    
+    chat_id = msg.chat.id
+    chat = await bot.get_chat(chat_id)
+    member_count = 0
+    
+    try:
+        if chat.type in ["group", "supergroup"]:
+            member_count = await bot.get_chat_member_count(chat_id)
+        else:
+            await msg.answer("❌ Эта команда работает только в группах!")
+            return
+    except:
+        await msg.answer("❌ Не удалось получить количество участников!")
+        return
+    
+    # Получаем всех участников и выдаём монеты
+    count = 0
+    async for member in bot.get_chat_administrators(chat_id):
+        try:
+            await add_karma(member.user.id, amount)
+            count += 1
+        except:
+            pass
+    
+    # Также выдаём обычным участникам (не админам) — сложно без полного списка
+    # Поэтому выдаём всем через get_chat_administrators + ещё всем через get_chat
+    try:
+        async for member in bot.get_chat_members(chat_id):
+            try:
+                await add_karma(member.user.id, amount)
+                count += 1
+            except:
+                pass
+    except:
+        pass
+    
+    await msg.answer(
+        f"💰 **Монеты выданы!**\n\n"
+        f"📌 Каждому участнику выдано: {amount} монет\n"
+        f"👥 Получили: {count} участников\n"
+        f"💳 Всего выдано: {amount * count} монет\n\n"
+        f"👮 Выдал: {await get_username_by_id(user_id)}"
+    )
+    
+    await send_log(
+        chat_id,
+        "💰 Выдача монет",
+        f"👮 Админ: {await get_username_by_id(user_id)}\n"
+        f"📌 Сумма: {amount} монет каждому\n"
+        f"👥 Получили: {count} участников"
+    )
 
 # ============================================================
 # === КОМАНДА /id ===
@@ -323,7 +399,10 @@ async def my_role(msg: types.Message):
             text += f"• `{ch_id}`\n"
     
     if level == 0:
-        text += f"\n💡 Ты участник. Для получения прав обратись к администратору."
+        text += f"\n💡 Ты участник. Доступны команды:\n"
+        text += f"• `/daily` — бонус\n"
+        text += f"• `/shop` — магазин\n"
+        text += f"• `/myrole` — эта команда\n"
     else:
         text += f"\n🔧 Доступные команды:\n"
         if level >= 1:
@@ -339,83 +418,10 @@ async def my_role(msg: types.Message):
         if level >= 4:
             text += f"• `/setupoperator`\n"
             text += f"• `/setowner`\n"
+            text += f"• `/givemoney 1000`\n"
     
     m = await msg.answer(text, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 60))
-
-# ============================================================
-# === КОМАНДА /giveadmin ===
-# ============================================================
-@dp.message(Command("giveadmin"))
-async def give_admin(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    
-    if level < 3:
-        await msg.answer("⛔ Только администраторы (уровень 3+) могут выдавать админку!")
-        return
-    
-    args = msg.text.split()
-    if len(args) < 3:
-        await msg.answer(
-            "📝 **Использование:**\n"
-            "`/giveadmin @user уровень`\n\n"
-            "📊 **Уровни:**\n"
-            "0 — Участник\n"
-            "1 — Наблюдатель 🟢\n"
-            "2 — Модератор 🟠\n"
-            "3 — Администратор 🔴\n"
-            "4 — Главный администратор ⭐",
-            parse_mode="Markdown"
-        )
-        return
-    
-    target = args[1]
-    try:
-        new_level = int(args[2])
-    except:
-        await msg.answer("❌ Введи корректный уровень (0-4)!")
-        return
-    
-    if new_level < 0 or new_level > 4:
-        await msg.answer("❌ Уровень должен быть от 0 до 4!")
-        return
-    
-    target_id = await resolve_user(target, msg.chat.id)
-    if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
-        return
-    
-    target_level = await get_user_level(target_id)
-    if target_level >= level:
-        await msg.answer(f"❌ Нельзя выдать уровень выше своего ({level})!")
-        return
-    
-    await set_user_level(target_id, new_level)
-    await log_admin_action(user_id, f"👑 Выдана админка ({new_level})", target_id, f"Новый уровень: {new_level}")
-    
-    target_name = await get_username_by_id(target_id)
-    level_name = ADMIN_LEVELS.get(new_level, {}).get("name", "Участник")
-    level_emoji = ADMIN_LEVELS.get(new_level, {}).get("emoji", "👤")
-    
-    await msg.answer(
-        f"✅ **Админка выдана!**\n\n"
-        f"👤 Пользователь: {target_name}\n"
-        f"📊 Уровень: {new_level} {level_emoji}\n"
-        f"👑 Роль: {level_name}\n"
-        f"👮 Админ: {await get_username_by_id(user_id)}"
-    )
-    
-    try:
-        await bot.send_message(
-            target_id,
-            f"👑 **Вам выдана админка!**\n\n"
-            f"📊 Уровень: {new_level} {level_emoji}\n"
-            f"👑 Роль: {level_name}\n"
-            f"👮 Выдал: {await get_username_by_id(user_id)}"
-        )
-    except:
-        pass
 
 # ============================================================
 # === КОМАНДА /setupoperator ===
@@ -487,9 +493,6 @@ async def start(msg: types.Message):
         "/кик @user причина\n"
         "/инфо @user\n"
         "/id @user — узнать ID\n"
-        "/giveadmin @user уровень — выдать админку\n"
-        "/setupoperator — назначить оператора\n"
-        "/setowner — назначить главу канала\n"
         "/shop — магазин",
         parse_mode="Markdown"
     )
