@@ -11,6 +11,7 @@ if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "7823802800").split(",") if x.strip()]
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1004329400139"))
 DB_NAME = os.getenv("DB_NAME", "bot.db")
+TELEGRAM_PROVIDER_TOKEN = os.getenv("TELEGRAM_PROVIDER_TOKEN", "")
 
 WHITELIST_DOMAINS = [
     "youtube.com", "youtu.be", "t.me", "telegram.org",
