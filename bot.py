@@ -2,21 +2,21 @@ import asyncio
 import time
 import re
 import random
+import aiosqlite
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.filters import StateFilter
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery, Message
-from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS
+from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS
 from database import *
+from states import AdminStates, AutoResponseStates
 from aiohttp import web
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-current_action = {}
-target_user = {}
-user_selected_chat = {}
-pending_stars_purchases = {}
+dp = Dispatcher(storage=MemoryStorage())
 
 # ============================================================
 # === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ===
@@ -218,12 +218,12 @@ async def my_role(msg: types.Message):
     stars = await get_user_stars(msg.from_user.id)
     
     ops = []
-    async with aiosqlite.connect("bot.db") as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT channel_id, channel_name FROM channel_operators WHERE operator_id = ?", (msg.from_user.id,))
         ops = await cursor.fetchall()
     
     owner = []
-    async with aiosqlite.connect("bot.db") as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT channel_id FROM channel_owners WHERE owner_id = ?", (msg.from_user.id,))
         owner = await cursor.fetchall()
     
@@ -350,23 +350,22 @@ async def give_admin(msg: types.Message):
 # === КОМАНДА /setupoperator ===
 # ============================================================
 @dp.message(Command("setupoperator"))
-async def setup_operator_cmd(msg: types.Message):
+async def setup_operator_cmd(msg: types.Message, state: FSMContext):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
-    
+
     if msg.chat.type not in ["channel", "supergroup"]:
         m = await msg.answer("❌ Эта команда работает только в каналах и группах!")
         asyncio.create_task(delete_after(m, 10))
         return
-    
+
     if level < 4:
         m = await msg.answer("⛔ Нужен уровень 4+!")
         asyncio.create_task(delete_after(m, 10))
         return
-    
-    global current_action
-    current_action[user_id] = "setup_operator"
-    target_user[user_id] = msg.chat.id
+
+    await state.update_data(channel_id=msg.chat.id)
+    await state.set_state(AdminStates.setup_operator)
     m = await msg.answer("📝 Введи @username или ID пользователя для назначения оператором:")
     asyncio.create_task(delete_after(m, 30))
 
@@ -374,23 +373,22 @@ async def setup_operator_cmd(msg: types.Message):
 # === КОМАНДА /setowner ===
 # ============================================================
 @dp.message(Command("setowner"))
-async def set_owner_cmd(msg: types.Message):
+async def set_owner_cmd(msg: types.Message, state: FSMContext):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
-    
+
     if msg.chat.type not in ["channel", "supergroup"]:
         m = await msg.answer("❌ Эта команда работает только в каналах и группах!")
         asyncio.create_task(delete_after(m, 10))
         return
-    
+
     if level < 4:
         m = await msg.answer("⛔ Нужен уровень 4+!")
         asyncio.create_task(delete_after(m, 10))
         return
-    
-    global current_action
-    current_action[user_id] = "setup_owner"
-    target_user[user_id] = msg.chat.id
+
+    await state.update_data(channel_id=msg.chat.id)
+    await state.set_state(AdminStates.setup_owner)
     m = await msg.answer("📝 Введи @username или ID пользователя для назначения главой канала:")
     asyncio.create_task(delete_after(m, 30))
 
@@ -1079,7 +1077,7 @@ async def successful_payment_handler(msg: Message):
 # === АВТО-ОТВЕТЫ ===
 # ============================================================
 @dp.message(Command("addresponse"))
-async def add_response_start(msg: types.Message):
+async def add_response_start(msg: types.Message, state: FSMContext):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
     if level < 3:
@@ -1089,9 +1087,8 @@ async def add_response_start(msg: types.Message):
     if msg.chat.type != "private":
         await msg.answer("❌ Эта команда работает только в ЛС!")
         return
-    
-    global current_action
-    current_action[user_id] = "add_response_chat"
+
+    await state.set_state(AutoResponseStates.add_response_chat)
     await msg.answer(
         "📝 **Настройка авто-ответа**\n\n"
         "Введи ID канала, для которого хочешь настроить авто-ответ:\n"
@@ -1128,7 +1125,7 @@ async def list_responses(msg: types.Message):
     await msg.answer(text, parse_mode="Markdown")
 
 @dp.message(Command("removeresponse"))
-async def remove_response_start(msg: types.Message):
+async def remove_response_start(msg: types.Message, state: FSMContext):
     user_id = msg.from_user.id
     if msg.chat.type != "private":
         await msg.answer("❌ Только в ЛС!")
@@ -1138,9 +1135,8 @@ async def remove_response_start(msg: types.Message):
     if level < 3:
         await msg.answer("⛔ Нет прав!")
         return
-    
-    global current_action
-    current_action[user_id] = "remove_response_chat"
+
+    await state.set_state(AutoResponseStates.remove_response_chat)
     await msg.answer(
         "📝 **Удаление авто-ответа**\n\n"
         "Введи ID канала, из которого хочешь удалить авто-ответ:\n"
@@ -1150,105 +1146,94 @@ async def remove_response_start(msg: types.Message):
 # ============================================================
 # === ОБРАБОТЧИКИ АВТО-ОТВЕТОВ ===
 # ============================================================
-@dp.message()
-async def auto_response_input(msg: types.Message):
-    user_id = msg.from_user.id
-    action = current_action.get(user_id)
-    
-    if not action:
+@dp.message(StateFilter(AutoResponseStates.add_response_chat), F.chat.type == "private")
+async def add_response_chat_handler(msg: types.Message, state: FSMContext):
+    try:
+        chat_id = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ Введи корректный ID канала!")
         return
-    
-    if msg.chat.type != "private":
+
+    try:
+        await bot.get_chat(chat_id)
+    except Exception:
+        await msg.answer("❌ Бот не найден в этом канале!")
         return
-    
-    if action == "add_response_chat":
-        try:
-            chat_id = int(msg.text.strip())
-            try:
-                chat = await bot.get_chat(chat_id)
-                if chat:
-                    current_action[user_id] = "add_response_keyword"
-                    target_user[user_id] = chat_id
-                    await msg.answer(
-                        f"✅ Канал `{chat_id}` выбран!\n\n"
-                        f"📝 Введи **ключевое слово**, на которое будет отвечать бот:\n"
-                        f"Пример: `привет`, `правила`, `как дела`"
-                    )
-                else:
-                    await msg.answer("❌ Бот не найден в этом канале!")
-            except:
-                await msg.answer("❌ Бот не найден в этом канале!")
-        except ValueError:
-            await msg.answer("❌ Введи корректный ID канала!")
+
+    await state.update_data(chat_id=chat_id)
+    await state.set_state(AutoResponseStates.add_response_keyword)
+    await msg.answer(
+        f"✅ Канал `{chat_id}` выбран!\n\n"
+        f"📝 Введи **ключевое слово**, на которое будет отвечать бот:\n"
+        f"Пример: `привет`, `правила`, `как дела`"
+    )
+
+@dp.message(StateFilter(AutoResponseStates.add_response_keyword), F.chat.type == "private")
+async def add_response_keyword_handler(msg: types.Message, state: FSMContext):
+    keyword = msg.text.strip().lower()
+    if not keyword:
+        await msg.answer("❌ Введи ключевое слово!")
         return
-    
-    if action == "add_response_keyword":
-        keyword = msg.text.strip().lower()
-        if not keyword:
-            await msg.answer("❌ Введи ключевое слово!")
-            return
-        current_action[user_id] = "add_response_text"
-        target_user[user_id] = {"chat": target_user.get(user_id), "keyword": keyword}
-        await msg.answer(
-            f"📝 Ключевое слово: `{keyword}`\n\n"
-            f"Теперь введи **текст ответа**, который будет отправлять бот:\n"
-            f"Можно использовать Markdown"
-        )
+
+    await state.update_data(keyword=keyword)
+    await state.set_state(AutoResponseStates.add_response_text)
+    await msg.answer(
+        f"📝 Ключевое слово: `{keyword}`\n\n"
+        f"Теперь введи **текст ответа**, который будет отправлять бот:\n"
+        f"Можно использовать Markdown"
+    )
+
+@dp.message(StateFilter(AutoResponseStates.add_response_text), F.chat.type == "private")
+async def add_response_text_handler(msg: types.Message, state: FSMContext):
+    response = msg.text.strip()
+    if not response:
+        await msg.answer("❌ Введи текст ответа!")
         return
-    
-    if action == "add_response_text":
-        response = msg.text.strip()
-        if not response:
-            await msg.answer("❌ Введи текст ответа!")
-            return
-        data = target_user.get(user_id)
-        if isinstance(data, dict):
-            chat_id = data.get("chat")
-            keyword = data.get("keyword")
-        else:
-            chat_id = data
-            keyword = ""
-        
-        await add_auto_response(chat_id, keyword, response, user_id)
-        await msg.answer(
-            f"✅ **Авто-ответ добавлен!**\n\n"
-            f"📢 Канал: `{chat_id}`\n"
-            f"🔑 Ключевое слово: `{keyword}`\n"
-            f"📝 Ответ: {response[:100]}...\n\n"
-            f"Для просмотра всех ответов используй `/listresponses`"
-        )
-        current_action[user_id] = None
-        target_user[user_id] = None
+
+    data = await state.get_data()
+    chat_id = data.get("chat_id")
+    keyword = data.get("keyword")
+    await add_auto_response(chat_id, keyword, response, msg.from_user.id)
+
+    await msg.answer(
+        f"✅ **Авто-ответ добавлен!**\n\n"
+        f"📢 Канал: `{chat_id}`\n"
+        f"🔑 Ключевое слово: `{keyword}`\n"
+        f"📝 Ответ: {response[:100]}...\n\n"
+        f"Для просмотра всех ответов используй `/listresponses`"
+    )
+    await state.clear()
+
+@dp.message(StateFilter(AutoResponseStates.remove_response_chat), F.chat.type == "private")
+async def remove_response_chat_handler(msg: types.Message, state: FSMContext):
+    try:
+        chat_id = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ Введи корректный ID канала!")
         return
-    
-    if action == "remove_response_chat":
-        try:
-            chat_id = int(msg.text.strip())
-            responses = await get_all_auto_responses(chat_id)
-            if not responses:
-                await msg.answer(f"📋 В канале `{chat_id}` нет авто-ответов!")
-                return
-            
-            text = f"📋 **Авто-ответы в канале `{chat_id}`:**\n\n"
-            for keyword, response, date in responses:
-                text += f"• `{keyword}` → {response[:50]}...\n"
-            text += f"\n📝 Введи **ключевое слово**, которое хочешь удалить:"
-            
-            current_action[user_id] = "remove_response_keyword"
-            target_user[user_id] = chat_id
-            await msg.answer(text, parse_mode="Markdown")
-        except ValueError:
-            await msg.answer("❌ Введи корректный ID канала!")
+
+    responses = await get_all_auto_responses(chat_id)
+    if not responses:
+        await msg.answer(f"📋 В канале `{chat_id}` нет авто-ответов!")
         return
-    
-    if action == "remove_response_keyword":
-        keyword = msg.text.strip().lower()
-        chat_id = target_user.get(user_id)
-        await remove_auto_response(chat_id, keyword)
-        await msg.answer(f"✅ Авто-ответ на `{keyword}` удалён!")
-        current_action[user_id] = None
-        target_user[user_id] = None
-        return
+
+    text = f"📋 **Авто-ответы в канале `{chat_id}`:**\n\n"
+    for keyword, response, date in responses:
+        text += f"• `{keyword}` → {response[:50]}...\n"
+    text += f"\n📝 Введи **ключевое слово**, которое хочешь удалить:"
+
+    await state.update_data(chat_id=chat_id)
+    await state.set_state(AutoResponseStates.remove_response_keyword)
+    await msg.answer(text, parse_mode="Markdown")
+
+@dp.message(StateFilter(AutoResponseStates.remove_response_keyword), F.chat.type == "private")
+async def remove_response_keyword_handler(msg: types.Message, state: FSMContext):
+    keyword = msg.text.strip().lower()
+    data = await state.get_data()
+    chat_id = data.get("chat_id")
+    await remove_auto_response(chat_id, keyword)
+    await msg.answer(f"✅ Авто-ответ на `{keyword}` удалён!")
+    await state.clear()
 
 # ============================================================
 # === ФИЛЬТР АВТО-ОТВЕТОВ ===
@@ -1298,7 +1283,7 @@ async def daily_bonus(msg: types.Message):
 
 @dp.message(Command("admins"))
 async def list_admins(msg: types.Message):
-    async with aiosqlite.connect("bot.db") as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id, level FROM roles WHERE level > 0 ORDER BY level DESC")
         results = await cursor.fetchall()
     if not results:
@@ -1576,7 +1561,7 @@ async def cmd_info(msg: types.Message):
     username = await get_username_by_id(target_id)
     
     logs = []
-    async with aiosqlite.connect("bot.db") as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             "SELECT admin_name, action, target_name, details, date FROM admin_logs WHERE target_id = ? OR admin_id = ? ORDER BY date DESC LIMIT 5",
             (target_id, target_id)
@@ -1659,7 +1644,7 @@ async def full_stats_callback(call: types.CallbackQuery):
     username = await get_username_by_id(target_id)
     
     logs = []
-    async with aiosqlite.connect("bot.db") as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             "SELECT admin_name, action, target_name, details, date FROM admin_logs WHERE target_id = ? OR admin_id = ? ORDER BY date DESC",
             (target_id, target_id)
@@ -1702,7 +1687,7 @@ async def full_stats_callback(call: types.CallbackQuery):
 # === ОБРАБОТКА КНОПОК ===
 # ============================================================
 @dp.callback_query()
-async def handle_callbacks(call: types.CallbackQuery):
+async def handle_callbacks(call: types.CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     level = await get_user_level(user_id)
     data = call.data
@@ -1738,14 +1723,14 @@ async def handle_callbacks(call: types.CallbackQuery):
             return
         elif action == "mute_duration":
             await call.message.answer("📝 Введи новую длительность мута (в секундах):")
-            current_action[user_id] = "set_mute_duration"
-            target_user[user_id] = chat_id
+            await state.update_data(channel_id=chat_id)
+            await state.set_state(AdminStates.set_mute_duration)
             await call.answer()
             return
         elif action == "warn_limit":
             await call.message.answer("📝 Введи новый лимит варнов (число):")
-            current_action[user_id] = "set_warn_limit"
-            target_user[user_id] = chat_id
+            await state.update_data(channel_id=chat_id)
+            await state.set_state(AdminStates.set_warn_limit)
             await call.answer()
             return
         
@@ -1852,20 +1837,20 @@ async def handle_callbacks(call: types.CallbackQuery):
     
     if data == "admin_add_whitelist":
         m = await call.message.answer("📝 Введи домен для добавления (например: example.com):")
-        current_action[user_id] = "add_whitelist"
+        await state.set_state(AdminStates.add_whitelist)
         await call.answer()
         return
     
     if data == "admin_remove_whitelist":
         m = await call.message.answer("📝 Введи домен для удаления:")
-        current_action[user_id] = "remove_whitelist"
+        await state.set_state(AdminStates.remove_whitelist)
         await call.answer()
         return
 
     if data in ["admin_warn", "admin_mute", "admin_unmute", "admin_clear_warns", "admin_check_warns", "admin_set_moderator", "admin_set_admin", "admin_set_level"]:
         action_name = data.replace("admin_", "")
         m = await call.message.answer(f"📝 Введи ID или @username для: {action_name}")
-        current_action[user_id] = action_name
+        await state.set_state(getattr(AdminStates, action_name))
         await call.answer()
         return
     
@@ -1877,19 +1862,19 @@ async def handle_callbacks(call: types.CallbackQuery):
     
     if data == "admin_user_stats":
         m = await call.message.answer("📝 Введи ID или @username пользователя:")
-        current_action[user_id] = "user_stats"
+        await state.set_state(AdminStates.user_stats)
         await call.answer()
         return
     
     if data == "admin_set_channel_operator":
         m = await call.message.answer("📝 Введи ID канала для назначения оператора:")
-        current_action[user_id] = "get_channel_for_operator"
+        await state.set_state(AdminStates.get_channel_for_operator)
         await call.answer()
         return
     
     if data == "admin_set_channel_owner":
         m = await call.message.answer("📝 Введи ID канала для назначения главы:")
-        current_action[user_id] = "get_channel_for_owner"
+        await state.set_state(AdminStates.get_channel_for_owner)
         await call.answer()
         return
     
@@ -1903,250 +1888,287 @@ async def handle_callbacks(call: types.CallbackQuery):
 # ============================================================
 # === ОБРАБОТКА ВВОДА ОТ АДМИНОВ ===
 # ============================================================
-@dp.message()
-async def admin_input(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    
-    if level < 1:
-        return
-    
-    text = msg.text.strip()
-    if not text:
-        return
-    
-    action = current_action.get(user_id)
-    if not action:
-        return
-    
-    if action == "set_mute_duration":
-        try:
-            duration = int(text)
-            chat_id = target_user.get(user_id)
-            settings = await get_channel_settings(chat_id)
-            settings['mute_duration'] = duration
-            await update_channel_settings(chat_id, settings)
-            m = await msg.answer(f"✅ Длительность мута: {duration} сек")
-            current_action[user_id] = None
-            asyncio.create_task(delete_after(m, 15))
-        except:
-            m = await msg.answer("❌ Введи число!")
-            asyncio.create_task(delete_after(m, 10))
-        return
-    
-    if action == "set_warn_limit":
-        try:
-            limit = int(text)
-            chat_id = target_user.get(user_id)
-            settings = await get_channel_settings(chat_id)
-            settings['warn_limit'] = limit
-            await update_channel_settings(chat_id, settings)
-            m = await msg.answer(f"✅ Лимит варнов: {limit}")
-            current_action[user_id] = None
-            asyncio.create_task(delete_after(m, 15))
-        except:
-            m = await msg.answer("❌ Введи число!")
-            asyncio.create_task(delete_after(m, 10))
-        return
+@dp.message(StateFilter(AdminStates.set_mute_duration))
+async def set_mute_duration_handler(msg: types.Message, state: FSMContext):
+    try:
+        duration = int(msg.text.strip())
+        data = await state.get_data()
+        chat_id = data.get("channel_id")
+        settings = await get_channel_settings(chat_id)
+        settings['mute_duration'] = duration
+        await update_channel_settings(chat_id, settings)
+        m = await msg.answer(f"✅ Длительность мута: {duration} сек")
+        asyncio.create_task(delete_after(m, 15))
+        await state.clear()
+    except ValueError:
+        m = await msg.answer("❌ Введи число!")
+        asyncio.create_task(delete_after(m, 10))
 
-    target_id = await resolve_user(text, msg.chat.id)
-    
+@dp.message(StateFilter(AdminStates.set_warn_limit))
+async def set_warn_limit_handler(msg: types.Message, state: FSMContext):
+    try:
+        limit = int(msg.text.strip())
+        data = await state.get_data()
+        chat_id = data.get("channel_id")
+        settings = await get_channel_settings(chat_id)
+        settings['warn_limit'] = limit
+        await update_channel_settings(chat_id, settings)
+        m = await msg.answer(f"✅ Лимит варнов: {limit}")
+        asyncio.create_task(delete_after(m, 15))
+        await state.clear()
+    except ValueError:
+        m = await msg.answer("❌ Введи число!")
+        asyncio.create_task(delete_after(m, 10))
+
+@dp.message(StateFilter(AdminStates.user_stats))
+async def admin_user_stats_handler(msg: types.Message, state: FSMContext):
+    target_id = await resolve_user(msg.text.strip(), msg.chat.id)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
         return
+    stats = await get_user_stats(target_id, msg.chat.id)
+    username = await get_username_by_id(target_id)
+    report = (
+        f"📊 **Статистика пользователя**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Пользователь: {username}\n"
+        f"🆔 ID: `{target_id}`\n\n"
+        f"📌 **Общая информация:**\n"
+        f"• 👑 Роль: {stats['role']}\n"
+        f"• 📊 Уровень: {stats['level']}\n"
+        f"• ⭐ Карма: {stats['karma']}\n\n"
+        f"⚠️ **Нарушения:**\n"
+        f"• 🚫 Всего нарушений: {stats['violations']}\n"
+        f"• ⚠️ Варнов: {stats['warns']}\n"
+        f"{'🔴 В муте' if stats['is_muted'] else '🟢 Не в муте'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+    m = await msg.answer(report, parse_mode="Markdown")
+    asyncio.create_task(delete_after(m, 45))
+    await state.clear()
 
-    if action == "user_stats":
-        stats = await get_user_stats(target_id, msg.chat.id)
-        username = await get_username_by_id(target_id)
-        report = (
-            f"📊 **Статистика пользователя**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 Пользователь: {username}\n"
-            f"🆔 ID: `{target_id}`\n\n"
-            f"📌 **Общая информация:**\n"
-            f"• 👑 Роль: {stats['role']}\n"
-            f"• 📊 Уровень: {stats['level']}\n"
-            f"• ⭐ Карма: {stats['karma']}\n\n"
-            f"⚠️ **Нарушения:**\n"
-            f"• 🚫 Всего нарушений: {stats['violations']}\n"
-            f"• ⚠️ Варнов: {stats['warns']}\n"
-            f"{'🔴 В муте' if stats['is_muted'] else '🟢 Не в муте'}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        )
-        m = await msg.answer(report, parse_mode="Markdown")
-        asyncio.create_task(delete_after(m, 45))
-        current_action[user_id] = None
-        return
+async def _resolve_target_from_text(text: str, chat_id: int):
+    return await resolve_user(text.strip(), chat_id)
 
-    if action == "warn":
-        await add_warning(target_id, msg.chat.id, "Нарушение", user_id)
-        warns = await get_warnings(target_id, msg.chat.id)
-        settings = await get_channel_settings(msg.chat.id)
-        if warns >= settings['warn_limit']:
-            await add_mute(target_id, settings['mute_duration'])
-            m = await msg.answer(f"⚠️ {warns} варнов! Мут {settings['mute_duration']//60} мин!")
-        else:
-            m = await msg.answer(f"✅ Варн {warns}/{settings['warn_limit']}")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.warn))
+async def admin_warn_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await add_warning(target_id, msg.chat.id, "Нарушение", msg.from_user.id)
+    warns = await get_warnings(target_id, msg.chat.id)
+    settings = await get_channel_settings(msg.chat.id)
+    if warns >= settings['warn_limit']:
+        await add_mute(target_id, settings['mute_duration'])
+        m = await msg.answer(f"⚠️ {warns} варнов! Мут {settings['mute_duration']//60} мин!")
+    else:
+        m = await msg.answer(f"✅ Варн {warns}/{settings['warn_limit']}")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "check_warns":
-        warns = await get_warnings(target_id, msg.chat.id)
-        m = await msg.answer(f"📋 Варнов: {warns}")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.check_warns))
+async def admin_check_warns_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    warns = await get_warnings(target_id, msg.chat.id)
+    m = await msg.answer(f"📋 Варнов: {warns}")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "clear_warns":
-        await clear_warnings(target_id, msg.chat.id)
-        m = await msg.answer(f"✅ Варны очищены")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.clear_warns))
+async def admin_clear_warns_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await clear_warnings(target_id, msg.chat.id)
+    m = await msg.answer(f"✅ Варны очищены")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "mute":
-        target_user[user_id] = target_id
-        current_action[user_id] = "mute_duration"
-        m = await msg.answer(f"⏱️ Введи длительность (сек):")
-        asyncio.create_task(delete_after(m, 30))
+@dp.message(StateFilter(AdminStates.mute))
+async def admin_mute_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await state.update_data(target_id=target_id)
+    await state.set_state(AdminStates.mute_duration)
+    m = await msg.answer(f"⏱️ Введи длительность (сек):")
+    asyncio.create_task(delete_after(m, 30))
 
-    if action == "mute_duration":
-        try:
-            duration = int(text)
-            await add_mute(target_user.get(user_id), duration)
-            m = await msg.answer(f"✅ Замучен на {duration}с")
-            current_action[user_id] = None
-            asyncio.create_task(delete_after(m, 15))
-        except:
-            m = await msg.answer("❌ Введи число!")
-            asyncio.create_task(delete_after(m, 10))
+@dp.message(StateFilter(AdminStates.mute_duration))
+async def admin_mute_duration_handler(msg: types.Message, state: FSMContext):
+    try:
+        duration = int(msg.text.strip())
+    except ValueError:
+        m = await msg.answer("❌ Введи число!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    data = await state.get_data()
+    target_id = data.get("target_id")
+    await add_mute(target_id, duration)
+    m = await msg.answer(f"✅ Замучен на {duration}с")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "unmute":
-        await remove_mute(target_id)
-        m = await msg.answer(f"✅ Размучен")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.unmute))
+async def admin_unmute_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await remove_mute(target_id)
+    m = await msg.answer(f"✅ Размучен")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "set_moderator":
-        await set_user_level(target_id, 2)
-        m = await msg.answer(f"🛡️ Модератор (уровень 2)")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.set_moderator))
+async def admin_set_moderator_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await set_user_level(target_id, 2)
+    m = await msg.answer(f"🛡️ Модератор (уровень 2)")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "set_admin":
-        await set_user_level(target_id, 3)
-        m = await msg.answer(f"🔴 Администратор (уровень 3)")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.set_admin))
+async def admin_set_admin_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await set_user_level(target_id, 3)
+    m = await msg.answer(f"🔴 Администратор (уровень 3)")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "set_level":
-        target_user[user_id] = target_id
-        current_action[user_id] = "set_level_input"
-        m = await msg.answer(
-            f"📊 Введи уровень (0-4):\n\n"
-            "0 - Участник\n"
-            "1 - Наблюдатель 🟢\n"
-            "2 - Модератор 🟠\n"
-            "3 - Администратор 🔴\n"
-            "4 - Главный администратор ⭐"
-        )
-        asyncio.create_task(delete_after(m, 60))
+@dp.message(StateFilter(AdminStates.set_level))
+async def admin_set_level_handler(msg: types.Message, state: FSMContext):
+    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    if not target_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await state.update_data(target_id=target_id)
+    await state.set_state(AdminStates.set_level_input)
+    m = await msg.answer(
+        f"📊 Введи уровень (0-4):\n\n"
+        "0 - Участник\n"
+        "1 - Наблюдатель 🟢\n"
+        "2 - Модератор 🟠\n"
+        "3 - Администратор 🔴\n"
+        "4 - Главный администратор ⭐"
+    )
+    asyncio.create_task(delete_after(m, 60))
 
-    if action == "set_level_input":
-        try:
-            new_level = int(text)
-            if 0 <= new_level <= 4:
-                await set_user_level(target_user.get(user_id), new_level)
-                name = ADMIN_LEVELS[new_level]["name"] if new_level > 0 else "Участник"
-                m = await msg.answer(f"✅ Уровень {new_level} ({name})")
-                current_action[user_id] = None
-                asyncio.create_task(delete_after(m, 15))
-            else:
-                m = await msg.answer("❌ 0-4!")
-                asyncio.create_task(delete_after(m, 10))
-        except:
-            m = await msg.answer("❌ Введи число!")
-            asyncio.create_task(delete_after(m, 10))
+@dp.message(StateFilter(AdminStates.set_level_input))
+async def admin_set_level_input_handler(msg: types.Message, state: FSMContext):
+    try:
+        new_level = int(msg.text.strip())
+    except ValueError:
+        m = await msg.answer("❌ Введи число!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    if not 0 <= new_level <= 4:
+        m = await msg.answer("❌ 0-4!")
+        asyncio.create_task(delete_after(m, 10))
+        return
+    data = await state.get_data()
+    target_id = data.get("target_id")
+    await set_user_level(target_id, new_level)
+    name = ADMIN_LEVELS[new_level]["name"] if new_level > 0 else "Участник"
+    m = await msg.answer(f"✅ Уровень {new_level} ({name})")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "get_channel_for_operator":
-        try:
-            channel_id = int(text)
-            target_user[user_id] = channel_id
-            current_action[user_id] = "setup_operator"
-            m = await msg.answer(f"📝 Введи @username оператора:")
-            asyncio.create_task(delete_after(m, 30))
-        except:
-            m = await msg.answer("❌ Введи ID канала!")
-            asyncio.create_task(delete_after(m, 10))
+@dp.message(StateFilter(AdminStates.get_channel_for_operator))
+async def admin_get_channel_for_operator_handler(msg: types.Message, state: FSMContext):
+    try:
+        channel_id = int(msg.text.strip())
+    except ValueError:
+        m = await msg.answer("❌ Введи ID канала!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await state.update_data(channel_id=channel_id)
+    await state.set_state(AdminStates.setup_operator)
+    m = await msg.answer("📝 Введи @username оператора:")
+    asyncio.create_task(delete_after(m, 30))
 
-    if action == "setup_operator":
-        channel_id = target_user.get(user_id)
-        operator_id = await resolve_user(text, channel_id)
-        if not operator_id:
-            m = await msg.answer("❌ Пользователь не найден!")
-            asyncio.create_task(delete_after(m, 10))
-            return
-        await set_channel_operator(channel_id, operator_id, text.replace('@', ''))
-        m = await msg.answer(f"✅ Оператор назначен для канала `{channel_id}`")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.setup_operator))
+async def admin_setup_operator_handler(msg: types.Message, state: FSMContext):
+    data = await state.get_data()
+    channel_id = data.get("channel_id")
+    operator_id = await resolve_user(msg.text.strip(), channel_id)
+    if not operator_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await set_channel_operator(channel_id, operator_id, msg.text.replace('@', ''))
+    m = await msg.answer(f"✅ Оператор назначен для канала `{channel_id}`")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "get_channel_for_owner":
-        try:
-            channel_id = int(text)
-            target_user[user_id] = channel_id
-            current_action[user_id] = "setup_owner"
-            m = await msg.answer(f"📝 Введи @username главы:")
-            asyncio.create_task(delete_after(m, 30))
-        except:
-            m = await msg.answer("❌ Введи ID канала!")
-            asyncio.create_task(delete_after(m, 10))
+@dp.message(StateFilter(AdminStates.get_channel_for_owner))
+async def admin_get_channel_for_owner_handler(msg: types.Message, state: FSMContext):
+    try:
+        channel_id = int(msg.text.strip())
+    except ValueError:
+        m = await msg.answer("❌ Введи ID канала!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await state.update_data(channel_id=channel_id)
+    await state.set_state(AdminStates.setup_owner)
+    m = await msg.answer("📝 Введи @username главы:")
+    asyncio.create_task(delete_after(m, 30))
 
-    if action == "setup_owner":
-        channel_id = target_user.get(user_id)
-        owner_id = await resolve_user(text, channel_id)
-        if not owner_id:
-            m = await msg.answer("❌ Пользователь не найден!")
-            asyncio.create_task(delete_after(m, 10))
-            return
-        await set_channel_owner(channel_id, owner_id, text.replace('@', ''))
-        m = await msg.answer(f"👑 Глава назначен для канала `{channel_id}`")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
+@dp.message(StateFilter(AdminStates.setup_owner))
+async def admin_setup_owner_handler(msg: types.Message, state: FSMContext):
+    data = await state.get_data()
+    channel_id = data.get("channel_id")
+    owner_id = await resolve_user(msg.text.strip(), channel_id)
+    if not owner_id:
+        m = await msg.answer("❌ Пользователь не найден!")
+        asyncio.create_task(delete_after(m, 10))
         return
+    await set_channel_owner(channel_id, owner_id, msg.text.replace('@', ''))
+    m = await msg.answer(f"👑 Глава назначен для канала `{channel_id}`")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "add_whitelist":
-        domain = text.lower()
-        domain = re.sub(r'^https?://', '', domain)
-        domain = re.sub(r'^www\.', '', domain)
-        await add_whitelist_domain(domain, user_id)
-        m = await msg.answer(f"✅ Домен {domain} добавлен")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
-        return
+@dp.message(StateFilter(AdminStates.add_whitelist))
+async def admin_add_whitelist_handler(msg: types.Message, state: FSMContext):
+    domain = msg.text.strip().lower()
+    domain = re.sub(r'^https?://', '', domain)
+    domain = re.sub(r'^www\.', '', domain)
+    await add_whitelist_domain(domain, msg.from_user.id)
+    m = await msg.answer(f"✅ Домен {domain} добавлен")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
-    if action == "remove_whitelist":
-        domain = text.lower()
-        domain = re.sub(r'^https?://', '', domain)
-        domain = re.sub(r'^www\.', '', domain)
-        await remove_whitelist_domain(domain)
-        m = await msg.answer(f"✅ Домен {domain} удалён")
-        current_action[user_id] = None
-        asyncio.create_task(delete_after(m, 15))
-        return
+@dp.message(StateFilter(AdminStates.remove_whitelist))
+async def admin_remove_whitelist_handler(msg: types.Message, state: FSMContext):
+    domain = msg.text.strip().lower()
+    domain = re.sub(r'^https?://', '', domain)
+    domain = re.sub(r'^www\.', '', domain)
+    await remove_whitelist_domain(domain)
+    m = await msg.answer(f"✅ Домен {domain} удалён")
+    asyncio.create_task(delete_after(m, 15))
+    await state.clear()
 
 # ============================================================
 # === ФИЛЬТР СООБЩЕНИЙ ===
@@ -2261,11 +2283,11 @@ async def filter_channel_posts(msg: types.Message):
 async def background_tasks():
     while True:
         try:
-            async with aiosqlite.connect("bot.db") as db:
+            async with aiosqlite.connect(DB_NAME) as db:
                 await db.execute("DELETE FROM warnings WHERE date < datetime('now', '-7 day')")
                 await db.commit()
             
-            async with aiosqlite.connect("bot.db") as db:
+            async with aiosqlite.connect(DB_NAME) as db:
                 cursor = await db.execute(
                     "SELECT user_id, until FROM mutes WHERE until <= ? AND until > ?",
                     (int(time.time()), int(time.time()) - 10)

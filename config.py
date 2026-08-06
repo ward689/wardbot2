@@ -1,6 +1,16 @@
-BOT_TOKEN = "8637976880:AAG7wFS1qopEabIQ8XtPrRlaYFO1A_XSRuI"
-ADMIN_IDS = [7823802800]
-LOG_CHANNEL_ID = -1004329400139
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=Path('.') / '.env')
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+    raise ValueError("BOT_TOKEN is not set. Create a .env file with BOT_TOKEN=your_token")
+
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "7823802800").split(",") if x.strip()]
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1004329400139"))
+DB_NAME = os.getenv("DB_NAME", "bot.db")
 
 WHITELIST_DOMAINS = [
     "youtube.com", "youtu.be", "t.me", "telegram.org",

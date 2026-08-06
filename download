@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# SQLite database
+bot.db
+
+# Environment variables
+.env
+
+# Editor files
+.vscode/
+*.swp
+*~

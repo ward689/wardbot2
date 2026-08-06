@@ -1,9 +1,7 @@
 import aiosqlite
 import time
 import random
-from config import ADMIN_IDS
-
-DB_NAME = "bot.db"
+from config import ADMIN_IDS, DB_NAME
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
