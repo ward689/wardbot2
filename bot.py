@@ -32,7 +32,7 @@ except Exception:
                     return True
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery, Message
-from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, TELEGRAM_PROVIDER_TOKEN
+from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, TELEGRAM_PROVIDER_TOKEN, SHOP_CHANNEL_IDS
 from database import *
 from states import AdminStates, AutoResponseStates
 from aiohttp import web
@@ -120,22 +120,54 @@ def parse_duration(duration_str: str) -> int:
 def has_forbidden(text: str) -> tuple:
     if not text:
         return False, None
-    t = text.lower()
+
+    def normalize(s: str) -> str:
+        s = s.lower()
+        s = s.replace('ё', 'е')
+        return s
+
+    t = normalize(text)
+
+    # 1) Exact whole-word match using word boundaries
     for word in FORBIDDEN_WORDS:
-        if word in t:
-            return True, word
-    clean = re.sub(r'[.,!?;:\s]+', '', t)
+        w = normalize(word)
+        try:
+            if re.search(r"\b" + re.escape(w) + r"\b", t):
+                return True, word
+        except re.error:
+            # ignore malformed regex-related words
+            pass
+
+    # 2) Fallback: check without common punctuation/whitespace
+    clean = re.sub(r'[\W_]+', '', t)
     for word in FORBIDDEN_WORDS:
-        if re.sub(r'[.,!?;:\s]+', '', word) in clean:
+        wclean = re.sub(r'[\W_]+', '', normalize(word))
+        if wclean and wclean in clean:
             return True, word
+
     return False, None
 
 def has_bad_words(text: str) -> bool:
     if not text:
         return False
-    t = text.lower()
+
+    def normalize(s: str) -> str:
+        s = s.lower()
+        s = s.replace('ё', 'е')
+        return s
+
+    t = normalize(text)
+    # whole-word check first
     for w in BAD_WORDS:
-        if w in t:
+        wn = normalize(w)
+        if re.search(r"\b" + re.escape(wn) + r"\b", t):
+            return True
+
+    # fallback substring
+    clean = re.sub(r'[\W_]+', '', t)
+    for w in BAD_WORDS:
+        wclean = re.sub(r'[\W_]+', '', normalize(w))
+        if wclean and wclean in clean:
             return True
     return False
 
@@ -451,32 +483,16 @@ async def give_money(msg: types.Message):
         return
     
     try:
+        # Telegram Bot API не предоставляет удобного метода для перебора всех участников.
+        # Надёжно выдавать награду можно администраторам чата.
         count = 0
-        try:
-            offset = 0
-            limit = 100
-            while True:
-                members = await bot.get_chat_members(chat_id, offset=offset, limit=limit)
-                if not members:
-                    break
-                for member in members:
-                    try:
-                        await add_karma(member.user.id, amount)
-                        count += 1
-                    except:
-                        pass
-                offset += limit
-                if len(members) < limit:
-                    break
-        except Exception as e:
-            print(f"Ошибка при выдаче участникам: {e}")
-            admins = await bot.get_chat_administrators(chat_id)
-            for admin in admins:
-                try:
-                    await add_karma(admin.user.id, amount)
-                    count += 1
-                except:
-                    pass
+        admins = await bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            try:
+                await add_karma(admin.user.id, amount)
+                count += 1
+            except Exception:
+                pass
         
         if count == 0:
             await msg.answer("❌ Не удалось выдать монеты! Убедитесь, что бот имеет права администратора.")
@@ -608,11 +624,15 @@ async def shop_cmd(msg: types.Message):
     karma = await get_karma(user_id)
     has_sub = await has_subscription(user_id)
     
-    known_chats = [
-        (-1003018474298, "анон чат"),
-        (-1003881455978, "ришон чатик"),
-        (-1003704771166, "анон кармиэль чат"),
-    ]
+    # Формируем список чатов из конфигурации `SHOP_CHANNEL_IDS`.
+    known_chats = []
+    for cid in SHOP_CHANNEL_IDS:
+        try:
+            chat = await bot.get_chat(cid)
+            name = chat.title or str(cid)
+        except:
+            name = str(cid)
+        known_chats.append((cid, name))
     
     chat_buttons = []
     for chat_id, chat_name in known_chats:
@@ -1014,7 +1034,7 @@ async def real_stars_callback(call: types.CallbackQuery):
             title=f"⭐ {price_info['label']}",
             description=f"Оплата {price_info['amount']} звёзд за {price_info['label']}",
             payload=f"stars_{action}_{chat_id}",
-            provider_token="",
+            provider_token=TELEGRAM_PROVIDER_TOKEN,
             currency="XTR",
             prices=[LabeledPrice(label=price_info['label'], amount=price_info['amount'])],
             start_parameter="stars_payment",
@@ -1260,6 +1280,10 @@ async def remove_response_keyword_handler(msg: types.Message, state: FSMContext)
 # ============================================================
 @dp.message(F.text)
 async def auto_response_filter(msg: types.Message):
+    # Не обрабатываем ЛС этим фильтром — авто-ответы работают в чатах/каналах
+    if msg.chat.type == "private":
+        return
+
     responses = await get_all_auto_responses(msg.chat.id)
     if not responses:
         return
@@ -2197,6 +2221,9 @@ async def admin_remove_whitelist_handler(msg: types.Message, state: FSMContext):
 async def filter_msg(msg: types.Message):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
+    # Не трогаем приватные сообщения — они обрабатываются отдельными FSM-хендлерами
+    if msg.chat.type == "private":
+        return
 
     settings = await get_channel_settings(msg.chat.id)
     if not settings['enabled']:

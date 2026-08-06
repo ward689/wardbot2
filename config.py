@@ -24,6 +24,10 @@ WHITELIST_DOMAINS = [
     "medium.com",
 ]
 
+# Каналы, которые показываются в `/shop`. Указывайте через запятую в .env, например:
+# SHOP_CHANNEL_IDS=-1003018474298,-1003881455978,-1003704771166
+SHOP_CHANNEL_IDS = [int(x.strip()) for x in os.getenv("SHOP_CHANNEL_IDS", "-1003018474298,-1003881455978,-1003704771166").split(",") if x.strip()]
+
 ADMIN_LEVELS = {
     0: {"name": "Участник", "emoji": "👤"},
     1: {"name": "Наблюдатель", "emoji": "🟢"},
