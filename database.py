@@ -120,6 +120,13 @@ async def init_db():
         """)
         
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS stars (
+                user_id INTEGER PRIMARY KEY,
+                stars INTEGER DEFAULT 0
+            )
+        """)
+        
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS auto_responses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER,
@@ -130,7 +137,6 @@ async def init_db():
             )
         """)
         
-        # === НОВАЯ ТАБЛИЦА: ПОДПИСКА ===
         await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 user_id INTEGER PRIMARY KEY,
@@ -296,6 +302,30 @@ async def get_karma(user_id: int) -> int:
         result = await cursor.fetchone()
         return result[0] if result else 0
 
+# === ЗВЁЗДЫ ===
+async def get_user_stars(user_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT stars FROM stars WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        return result[0] if result else 0
+
+async def add_stars(user_id: int, amount: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO stars (user_id, stars) VALUES (?, COALESCE((SELECT stars FROM stars WHERE user_id = ?), 0) + ?)",
+            (user_id, user_id, amount)
+        )
+        await db.commit()
+
+async def remove_stars(user_id: int, amount: int):
+    current = await get_user_stars(user_id)
+    if current < amount:
+        return False
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE stars SET stars = stars - ? WHERE user_id = ?", (amount, user_id))
+        await db.commit()
+    return True
+
 # === СТАТИСТИКА ===
 async def add_violation(user_id: int, chat_id: int, type: str):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -318,6 +348,7 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
         mute_until = await get_mute_until(user_id) if is_muted_flag else 0
         level = await get_user_level(user_id)
         role = await get_user_role(user_id)
+        stars = await get_user_stars(user_id)
         return {
             "violations": violations,
             "warns": warns,
@@ -325,7 +356,8 @@ async def get_user_stats(user_id: int, chat_id: int) -> dict:
             "is_muted": is_muted_flag,
             "mute_until": mute_until,
             "level": level,
-            "role": role
+            "role": role,
+            "stars": stars
         }
 
 # === ДЕЙЛИ ===
