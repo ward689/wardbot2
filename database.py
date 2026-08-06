@@ -227,6 +227,34 @@ async def get_user_level(user_id: int) -> int:
         result = await cursor.fetchone()
         return result[0] if result else 0
 
+async def claim_daily(user_id: int):
+    now = int(time.time())
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        if row:
+            last_claim, streak = row
+            elapsed = now - last_claim
+            if elapsed >= 86400:
+                if elapsed < 172800:
+                    streak += 1
+                else:
+                    streak = 1
+            else:
+                return streak
+            await db.execute(
+                "INSERT OR REPLACE INTO daily_bonus (user_id, last_claim, streak) VALUES (?, ?, ?)",
+                (user_id, now, streak)
+            )
+        else:
+            streak = 1
+            await db.execute(
+                "INSERT INTO daily_bonus (user_id, last_claim, streak) VALUES (?, ?, ?)",
+                (user_id, now, streak)
+            )
+        await db.commit()
+        return streak
+
 async def get_user_role(user_id: int) -> str:
     level = await get_user_level(user_id)
     from config import ADMIN_LEVELS
@@ -366,12 +394,12 @@ async def get_daily_bonus(user_id: int) -> tuple:
         now = int(time.time())
         day = 86400
         if not result:
-            return True, 100, 1
+            return True, 100, 1, 0
         last_claim, streak = result
-        if now - last_claim >= day:
-            return True, 100 + (streak * 10), streak + 1
-        else:
-            return False, 0, streak
+        elapsed = now - last_claim
+        if elapsed >= day:
+            return True, 100 + (streak * 10), streak + 1, 0
+        return False, 0, streak, day - elapsed
 
 async def claim_daily(user_id: int):
     now = int(time.time())

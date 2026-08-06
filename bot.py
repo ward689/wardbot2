@@ -537,6 +537,7 @@ async def start(msg: types.Message):
         "👑 /admin — панель\n"
         "👤 /myrole — роль\n"
         "🎁 /daily — бонус\n"
+        "ℹ️ /help — помощь\n"
         "/мут @user 24ч причина\n"
         "/размут @user\n"
         "/варн @user причина\n"
@@ -553,6 +554,25 @@ async def start(msg: types.Message):
         parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(m, 60))
+
+# ============================================================
+# === КОМАНДА /help ===
+@dp.message(Command("help"))
+async def help_menu(msg: types.Message):
+    await msg.answer(
+        "ℹ️ *Доступные команды:*\n\n"
+        "👤 /myrole — узнать свою роль\n"
+        "👑 /admin — админ-панель\n"
+        "🎁 /daily — ежедневный бонус\n"
+        "🛍️ /shop — магазин\n"
+        "⭐ /buy_real_stars — купить за звёзды\n"
+        "📌 /id @user — узнать ID\n"
+        "📝 /addresponse — авто-ответ (ЛС)\n"
+        "📋 /listresponses — список авто-ответов (ЛС)\n"
+        "🗑️ /removeresponse — удалить авто-ответ (ЛС)\n\n"
+        "💡 Напиши /start для стартового меню",
+        parse_mode="Markdown"
+    )
 
 # ============================================================
 # === ПОЛИТИКА ===
@@ -1300,7 +1320,7 @@ async def auto_response_filter(msg: types.Message):
 @dp.message(Command("daily"))
 async def daily_bonus(msg: types.Message):
     user_id = msg.from_user.id
-    can_claim, amount, streak = await get_daily_bonus(user_id)
+    can_claim, amount, streak, remaining = await get_daily_bonus(user_id)
     if can_claim:
         await claim_daily(user_id)
         await add_karma(user_id, amount // 10)
@@ -1314,12 +1334,12 @@ async def daily_bonus(msg: types.Message):
         )
         asyncio.create_task(delete_after(m, 30))
     else:
-        remaining = 86400 - (int(time.time()) % 86400)
         hours = remaining // 3600
         minutes = (remaining % 3600) // 60
+        seconds = remaining % 60
         m = await msg.answer(
             f"⏳ **Бонус уже получен!**\n\n"
-            f"Следующий через: {hours}ч {minutes}м\n"
+            f"Следующий через: {hours}ч {minutes}м {seconds}с\n"
             f"🔥 Стрик: {streak} дней",
             parse_mode="Markdown"
         )
@@ -1742,7 +1762,8 @@ async def handle_callbacks(call: types.CallbackQuery, state: FSMContext):
         return
 
     if data.startswith("sett_"):
-        action = data.split("_")[1]
+        # support multi-part keys like sett_mute_duration or sett_block_new
+        action = data[len("sett_"):]
         chat_id = call.message.chat.id
         settings = await get_channel_settings(chat_id)
         
