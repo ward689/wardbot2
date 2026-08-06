@@ -481,7 +481,7 @@ async def give_money(msg: types.Message):
         print(f"Ошибка /givemoney: {e}")
 
 # ============================================================
-# === ОСТАЛЬНЫЕ КОМАНДЫ ===
+# === КОМАНДА START ===
 # ============================================================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
@@ -509,12 +509,765 @@ async def start(msg: types.Message):
         "/shop — магазин\n"
         "/addresponse — добавить авто-ответ (ЛС)\n"
         "/listresponses — список авто-ответов (ЛС)\n"
-        "/removeresponse — удалить авто-ответ (ЛС)",
+        "/removeresponse — удалить авто-ответ (ЛС)\n"
+        "/buy_real_stars — купить за звёзды",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(m, 60))
 
+# ============================================================
+# === ПОЛИТИКА ===
+# ============================================================
+@dp.callback_query(F.data == "policy")
+async def policy_callback(call: types.CallbackQuery):
+    await call.answer()
+    await call.message.answer(
+        "📜 **Политика бота-модератора**\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "**1. Общие положения**\n"
+        "Бот создан для поддержания порядка в чатах и каналах.\n\n"
+        
+        "**2. Запрещённый контент**\n"
+        "🚫 Угрозы и насилие\n"
+        "🚫 Терроризм и экстремизм\n"
+        "🚫 Наркотики и пропаганда наркотиков\n"
+        "🚫 Мат с фото запрещён\n\n"
+        
+        "**3. Система наказаний**\n"
+        "⚠️ 1 варн — предупреждение\n"
+        "⚠️ 3 варна — мут 5-30 минут\n"
+        "🔒 Мут — ограничение на отправку сообщений\n"
+        "🚫 Бан — 30 дней\n\n"
+        
+        "**4. Магазин**\n"
+        "🪙 За монеты:\n"
+        "• Снять варн — 500 монет\n"
+        "• Снять мут — 1000 монет\n"
+        "• Разбан — 2500 монет\n"
+        "• Одноразовая ссылка — 150 монет\n\n"
+        "⭐ За звёзды:\n"
+        "• Снять варн — 10 ⭐\n"
+        "• Снять мут — 20 ⭐\n"
+        "• Разбан — 50 ⭐\n\n"
+        "📦 Подписка:\n"
+        "• Безлимитные ссылки — 2000 монет/мес или 20 ⭐\n\n"
+        
+        "**5. Получение монет**\n"
+        "🎁 Ежедневный бонус — `/daily`\n"
+        "💰 Выдача админом — `/givemoney 1000`\n\n"
+        
+        "**6. Авто-ответы**\n"
+        "Настраиваются в ЛС командами:\n"
+        "📝 /addresponse\n"
+        "📋 /listresponses\n"
+        "🗑️ /removeresponse\n\n"
+        
+        "**7. Администрация**\n"
+        "👑 Главный администратор имеет полный доступ\n"
+        "🔴 Администратор — может выдавать админку\n"
+        "🟠 Модератор — может мутить и варнить\n"
+        "🟢 Наблюдатель — может выдавать варны\n\n"
+        
+        "**8. Контакты**\n"
+        "По всем вопросам обращайтесь к главному администратору.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌴 *Соблюдайте правила и будьте вежливы!*",
+        parse_mode="Markdown"
+    )
+
+# ============================================================
+# === КОМАНДА /shop ===
+# ============================================================
+@dp.message(Command("shop"))
+async def shop_cmd(msg: types.Message):
+    user_id = msg.from_user.id
+    user_username = await get_username_by_id(user_id)
+    karma = await get_karma(user_id)
+    has_sub = await has_subscription(user_id)
+    
+    known_chats = [
+        (-1003018474298, "анон чат"),
+        (-1003881455978, "ришон чатик"),
+        (-1003704771166, "анон кармиэль чат"),
+    ]
+    
+    chat_buttons = []
+    for chat_id, chat_name in known_chats:
+        try:
+            chat = await bot.get_chat(chat_id)
+            if chat:
+                chat_buttons.append([InlineKeyboardButton(
+                    text=f"📢 {chat_name}",
+                    callback_data=f"shop_select_chat_{chat_id}"
+                )])
+        except:
+            pass
+    
+    if not chat_buttons:
+        for chat_id, chat_name in known_chats:
+            chat_buttons.append([InlineKeyboardButton(
+                text=f"📢 {chat_name}",
+                callback_data=f"shop_select_chat_{chat_id}"
+            )])
+    
+    chat_buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=chat_buttons)
+    
+    sub_status = "✅ Активна" if has_sub else "❌ Неактивна"
+    
+    await msg.answer(
+        f"🛍️ **Магазин**\n\n"
+        f"👤 Пользователь: {user_username}\n"
+        f"💰 Баланс: {karma} монет\n"
+        f"📦 Подписка: {sub_status}\n\n"
+        f"📌 **Выбери чат, в котором хочешь совершить покупку:**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("shop_select_chat_"))
+async def shop_select_chat(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    chat_id = int(call.data.replace("shop_select_chat_", ""))
+    
+    user_selected_chat[user_id] = chat_id
+    
+    try:
+        chat = await bot.get_chat(chat_id)
+        chat_name = chat.title or str(chat_id)
+    except:
+        chat_name = str(chat_id)
+    
+    warns = await get_warnings(user_id, chat_id)
+    is_muted_user = await is_muted(user_id)
+    karma = await get_karma(user_id)
+    has_sub = await has_subscription(user_id)
+    
+    has_unlimited = has_sub
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="━━━ 🪙 За монеты ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
+        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
+        [InlineKeyboardButton(text="🔄 Разбан — 2500 монет", callback_data="shop_buy_unban")],
+        [InlineKeyboardButton(text="🔗 Одноразовая ссылка — 150 монет", callback_data="shop_buy_invite")],
+        [InlineKeyboardButton(text="━━━ ⭐ За звёзды ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(text="🗑️ Снять варн — 10 ⭐", callback_data="shop_buy_stars_clear_warn")],
+        [InlineKeyboardButton(text="🔓 Снять мут — 20 ⭐", callback_data="shop_buy_stars_clear_mute")],
+        [InlineKeyboardButton(text="🔄 Разбан — 50 ⭐", callback_data="shop_buy_stars_unban")],
+        [InlineKeyboardButton(text="━━━ 📦 Подписка ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(
+            text=f"{'✅' if has_unlimited else '❌'} Безлимитные ссылки — 2000 монет/мес",
+            callback_data="shop_buy_subscription"
+        )],
+        [InlineKeyboardButton(text="⭐ Безлимитные ссылки — 20 ⭐/мес", callback_data="shop_buy_stars_subscription")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
+    ])
+    
+    status_text = ""
+    if warns > 0:
+        status_text += f"\n⚠️ У тебя {warns} варнов"
+    if is_muted_user:
+        status_text += f"\n🔴 Ты в муте!"
+    if has_unlimited:
+        status_text += f"\n📦 Безлимитные ссылки активны!"
+    if warns == 0 and not is_muted_user:
+        status_text += f"\n✅ Нарушений нет"
+    
+    await call.message.edit_text(
+        f"🛍️ **Магазин**\n\n"
+        f"📢 Чат: {chat_name}\n"
+        f"👤 Пользователь: {await get_username_by_id(user_id)}\n"
+        f"💰 Баланс: {karma} монет\n"
+        f"📦 Подписка: {'✅ Активна' if has_unlimited else '❌ Неактивна'}{status_text}\n\n"
+        f"📌 **Выбери действие:**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "shop_back")
+async def shop_back(call: types.CallbackQuery):
+    await shop_cmd(call.message)
+    await call.answer()
+
+@dp.callback_query(F.data == "ignore")
+async def ignore_callback(call: types.CallbackQuery):
+    await call.answer()
+
+# ============================================================
+# === ПОКУПКИ ===
+# ============================================================
+@dp.callback_query(F.data.startswith("shop_buy_"))
+async def shop_buy(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    action = call.data.replace("shop_buy_", "")
+    chat_id = user_selected_chat.get(user_id)
+    
+    if not chat_id:
+        await call.answer("❌ Сначала выбери чат!", show_alert=True)
+        return
+    
+    try:
+        chat = await bot.get_chat(chat_id)
+        chat_name = chat.title or str(chat_id)
+    except:
+        chat_name = str(chat_id)
+    
+    karma = await get_karma(user_id)
+    stars = await get_user_stars(user_id)
+    
+    # === ПОКУПКА ЗА МОНЕТЫ ===
+    if action == "clear_warn":
+        if karma < COIN_PRICES["clear_warn"]:
+            await call.answer(f"❌ Нужно {COIN_PRICES['clear_warn']} монет!", show_alert=True)
+            return
+        warns = await get_warnings(user_id, chat_id)
+        if warns == 0:
+            await call.answer("❌ У тебя нет варнов!", show_alert=True)
+            return
+        await clear_warnings(user_id, chat_id)
+        await add_karma(user_id, -COIN_PRICES["clear_warn"])
+        await call.answer("✅ Варны сняты!", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Варны сняты!**\n\n"
+            f"📢 Чат: {chat_name}\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if action == "clear_mute":
+        if karma < COIN_PRICES["clear_mute"]:
+            await call.answer(f"❌ Нужно {COIN_PRICES['clear_mute']} монет!", show_alert=True)
+            return
+        if not await is_muted(user_id):
+            await call.answer("❌ Ты не в муте!", show_alert=True)
+            return
+        await remove_mute(user_id)
+        await add_karma(user_id, -COIN_PRICES["clear_mute"])
+        await call.answer("✅ Мут снят!", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Мут снят!**\n\n"
+            f"📢 Чат: {chat_name}\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if action == "unban":
+        if karma < COIN_PRICES["unban"]:
+            await call.answer(f"❌ Нужно {COIN_PRICES['unban']} монет!", show_alert=True)
+            return
+        if await is_muted(user_id):
+            await remove_mute(user_id)
+        await clear_warnings(user_id, chat_id)
+        await add_karma(user_id, -COIN_PRICES["unban"])
+        await call.answer("✅ Разбан выполнен!", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Разбан выполнен!**\n\n"
+            f"📢 Чат: {chat_name}\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if action == "invite":
+        if karma < COIN_PRICES["invite"]:
+            await call.answer(f"❌ Нужно {COIN_PRICES['invite']} монет!", show_alert=True)
+            return
+        try:
+            invite_link = await bot.create_chat_invite_link(chat_id, member_limit=1)
+            await add_karma(user_id, -COIN_PRICES["invite"])
+            await call.answer("✅ Ссылка создана!", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Одноразовая ссылка!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"🔗 {invite_link.invite_link}\n"
+                f"💰 Остаток: {await get_karma(user_id)} монет",
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
+        return
+    
+    if action == "subscription":
+        if karma < SUBSCRIPTION_PRICE:
+            await call.answer(f"❌ Нужно {SUBSCRIPTION_PRICE} монет!", show_alert=True)
+            return
+        await add_subscription(user_id, 30)
+        await add_karma(user_id, -SUBSCRIPTION_PRICE)
+        await call.answer("✅ Подписка оформлена на 30 дней!", show_alert=True)
+        await call.message.edit_text(
+            f"✅ **Подписка оформлена!**\n\n"
+            f"📢 Чат: {chat_name}\n"
+            f"📦 Безлимитные ссылки на 30 дней!\n"
+            f"💰 Остаток: {await get_karma(user_id)} монет",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # === ПОКУПКА ЗА ЗВЁЗДЫ ===
+    if action.startswith("stars_"):
+        action_type = action.replace("stars_", "")
+        
+        if action_type == "clear_warn":
+            stars_needed = STARS_PRICES.get("clear_warn", 10)
+            if stars < stars_needed:
+                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
+                return
+            warns = await get_warnings(user_id, chat_id)
+            if warns == 0:
+                await call.answer("❌ У тебя нет варнов!", show_alert=True)
+                return
+            await clear_warnings(user_id, chat_id)
+            await remove_stars(user_id, stars_needed)
+            await call.answer("✅ Варны сняты!", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Варны сняты за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
+                parse_mode="Markdown"
+            )
+            return
+        
+        if action_type == "clear_mute":
+            stars_needed = STARS_PRICES.get("clear_mute", 20)
+            if stars < stars_needed:
+                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
+                return
+            if not await is_muted(user_id):
+                await call.answer("❌ Ты не в муте!", show_alert=True)
+                return
+            await remove_mute(user_id)
+            await remove_stars(user_id, stars_needed)
+            await call.answer("✅ Мут снят!", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Мут снят за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
+                parse_mode="Markdown"
+            )
+            return
+        
+        if action_type == "unban":
+            stars_needed = STARS_PRICES.get("unban", 50)
+            if stars < stars_needed:
+                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
+                return
+            if await is_muted(user_id):
+                await remove_mute(user_id)
+            await clear_warnings(user_id, chat_id)
+            await remove_stars(user_id, stars_needed)
+            await call.answer("✅ Разбан выполнен!", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Разбан за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
+                parse_mode="Markdown"
+            )
+            return
+        
+        if action_type == "subscription":
+            stars_needed = SUBSCRIPTION_STARS
+            if stars < stars_needed:
+                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
+                return
+            await add_subscription(user_id, 30)
+            await remove_stars(user_id, stars_needed)
+            await call.answer("✅ Подписка оформлена на 30 дней!", show_alert=True)
+            await call.message.edit_text(
+                f"✅ **Подписка за звёзды!**\n\n"
+                f"📢 Чат: {chat_name}\n"
+                f"📦 Безлимитные ссылки на 30 дней!\n"
+                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
+                parse_mode="Markdown"
+            )
+            return
+    
+    await call.answer("❌ Неизвестное действие")
+
+@dp.callback_query(F.data == "shop_close")
+async def shop_close(call: types.CallbackQuery):
+    await call.message.delete()
+    await call.answer("🛍️ Магазин закрыт")
+
+# ============================================================
+# === НАСТОЯЩИЕ TELEGRAM STARS ===
+# ============================================================
+@dp.message(Command("buy_real_stars"))
+async def buy_real_stars_cmd(msg: types.Message):
+    user_id = msg.from_user.id
+    
+    if user_id not in user_selected_chat:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛍️ Выбрать чат в /shop", callback_data="go_shop")]
+        ])
+        await msg.answer(
+            "❌ Сначала выбери чат в `/shop`!\n"
+            "Нажми на кнопку ниже, чтобы перейти в магазин.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+    
+    chat_id = user_selected_chat.get(user_id)
+    
+    try:
+        chat = await bot.get_chat(chat_id)
+        chat_name = chat.title or str(chat_id)
+    except:
+        chat_name = str(chat_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Снять варн — 10 звёзд", callback_data="real_stars_clear_warn")],
+        [InlineKeyboardButton(text="⭐ Снять мут — 20 звёзд", callback_data="real_stars_clear_mute")],
+        [InlineKeyboardButton(text="⭐ Разбан — 50 звёзд", callback_data="real_stars_unban")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="real_stars_close")]
+    ])
+    
+    await msg.answer(
+        f"⭐ **Купить за настоящие звёзды**\n\n"
+        f"📢 Чат: {chat_name}\n"
+        f"💰 Оплата происходит настоящими Telegram Stars.\n"
+        f"После оплаты действие будет выполнено автоматически.\n\n"
+        f"📌 **Выбери действие:**",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data == "go_shop")
+async def go_shop_callback(call: types.CallbackQuery):
+    await shop_cmd(call.message)
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("real_stars_"))
+async def real_stars_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    action = call.data.replace("real_stars_", "")
+    
+    if action == "close":
+        await call.message.delete()
+        await call.answer("Закрыто")
+        return
+    
+    chat_id = user_selected_chat.get(user_id)
+    if not chat_id:
+        await call.answer("❌ Сначала выбери чат в /shop!", show_alert=True)
+        return
+    
+    # Проверяем наличие нарушений
+    if action == "clear_warn":
+        warns = await get_warnings(user_id, chat_id)
+        if warns == 0:
+            await call.answer("❌ У тебя нет варнов!", show_alert=True)
+            return
+    elif action == "clear_mute":
+        if not await is_muted(user_id):
+            await call.answer("❌ Ты не в муте!", show_alert=True)
+            return
+    
+    prices = {
+        "clear_warn": {"amount": 10, "label": "Снять варн"},
+        "clear_mute": {"amount": 20, "label": "Снять мут"},
+        "unban": {"amount": 50, "label": "Разбан"},
+    }
+    
+    price_info = prices.get(action)
+    if not price_info:
+        await call.answer("❌ Неизвестное действие!", show_alert=True)
+        return
+    
+    # Сохраняем информацию о покупке
+    pending_stars_purchases[user_id] = {
+        "action": action,
+        "chat_id": chat_id,
+        "amount": price_info["amount"],
+        "label": price_info["label"]
+    }
+    
+    try:
+        await bot.send_invoice(
+            chat_id=user_id,
+            title=f"⭐ {price_info['label']}",
+            description=f"Оплата {price_info['amount']} звёзд за {price_info['label']}",
+            payload=f"stars_{action}_{chat_id}",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label=price_info['label'], amount=price_info['amount'])],
+            start_parameter="stars_payment",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False,
+        )
+        await call.message.delete()
+        await call.answer("💳 Счёт создан! Подтвердите оплату в ЛС бота.")
+    except Exception as e:
+        await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
+
+# ============================================================
+# === ОБРАБОТКА УСПЕШНЫХ ПЛАТЕЖЕЙ ===
+# ============================================================
+@dp.pre_checkout_query()
+async def pre_checkout_query_handler(query: PreCheckoutQuery):
+    await query.answer(ok=True)
+
+@dp.message(F.successful_payment)
+async def successful_payment_handler(msg: Message):
+    user_id = msg.from_user.id
+    payload = msg.successful_payment.invoice_payload
+    total_amount = msg.successful_payment.total_amount // 100
+    
+    parts = payload.split("_")
+    if len(parts) >= 3 and parts[0] == "stars":
+        action = parts[1]
+        chat_id = int(parts[2])
+        
+        try:
+            if action == "clear_warn":
+                warns = await get_warnings(user_id, chat_id)
+                if warns > 0:
+                    await clear_warnings(user_id, chat_id)
+                    await msg.answer(
+                        f"✅ **Варны сняты!**\n\n"
+                        f"📢 Чат: {chat_id}\n"
+                        f"⭐ Оплачено: {total_amount} звёзд\n"
+                        f"🛍️ Спасибо за покупку!",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await msg.answer("❌ У тебя нет варнов!")
+                return
+            
+            if action == "clear_mute":
+                if await is_muted(user_id):
+                    await remove_mute(user_id)
+                    await msg.answer(
+                        f"✅ **Мут снят!**\n\n"
+                        f"📢 Чат: {chat_id}\n"
+                        f"⭐ Оплачено: {total_amount} звёзд\n"
+                        f"🛍️ Спасибо за покупку!",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await msg.answer("❌ Ты не в муте!")
+                return
+            
+            if action == "unban":
+                if await is_muted(user_id):
+                    await remove_mute(user_id)
+                await clear_warnings(user_id, chat_id)
+                await msg.answer(
+                    f"✅ **Разбан выполнен!**\n\n"
+                    f"📢 Чат: {chat_id}\n"
+                    f"⭐ Оплачено: {total_amount} звёзд\n"
+                    f"🛍️ Спасибо за покупку!",
+                    parse_mode="Markdown"
+                )
+                return
+                
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка: {str(e)[:100]}")
+
+# ============================================================
+# === АВТО-ОТВЕТЫ ===
+# ============================================================
+@dp.message(Command("addresponse"))
+async def add_response_start(msg: types.Message):
+    user_id = msg.from_user.id
+    level = await get_user_level(user_id)
+    if level < 3:
+        await msg.answer("⛔ Нет прав!")
+        return
+    
+    if msg.chat.type != "private":
+        await msg.answer("❌ Эта команда работает только в ЛС!")
+        return
+    
+    global current_action
+    current_action[user_id] = "add_response_chat"
+    await msg.answer(
+        "📝 **Настройка авто-ответа**\n\n"
+        "Введи ID канала, для которого хочешь настроить авто-ответ:\n"
+        "Пример: `-1003018474298`"
+    )
+
+@dp.message(Command("listresponses"))
+async def list_responses(msg: types.Message):
+    user_id = msg.from_user.id
+    if msg.chat.type != "private":
+        await msg.answer("❌ Только в ЛС!")
+        return
+    
+    level = await get_user_level(user_id)
+    if level < 3:
+        await msg.answer("⛔ Нет прав!")
+        return
+    
+    chats = await get_all_chats_with_auto_responses()
+    if not chats:
+        await msg.answer("📋 Нет настроенных авто-ответов ни для одного канала.")
+        return
+    
+    text = "📋 **Каналы с авто-ответами:**\n\n"
+    for chat_id in chats:
+        try:
+            chat = await bot.get_chat(chat_id)
+            chat_name = chat.title or str(chat_id)
+        except:
+            chat_name = str(chat_id)
+        responses = await get_all_auto_responses(chat_id)
+        text += f"📢 {chat_name} (`{chat_id}`) — {len(responses)} правил\n"
+    
+    await msg.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("removeresponse"))
+async def remove_response_start(msg: types.Message):
+    user_id = msg.from_user.id
+    if msg.chat.type != "private":
+        await msg.answer("❌ Только в ЛС!")
+        return
+    
+    level = await get_user_level(user_id)
+    if level < 3:
+        await msg.answer("⛔ Нет прав!")
+        return
+    
+    global current_action
+    current_action[user_id] = "remove_response_chat"
+    await msg.answer(
+        "📝 **Удаление авто-ответа**\n\n"
+        "Введи ID канала, из которого хочешь удалить авто-ответ:\n"
+        "Пример: `-1003018474298`"
+    )
+
+# ============================================================
+# === ОБРАБОТЧИКИ АВТО-ОТВЕТОВ ===
+# ============================================================
+@dp.message()
+async def auto_response_input(msg: types.Message):
+    user_id = msg.from_user.id
+    action = current_action.get(user_id)
+    
+    if not action:
+        return
+    
+    if msg.chat.type != "private":
+        return
+    
+    if action == "add_response_chat":
+        try:
+            chat_id = int(msg.text.strip())
+            try:
+                chat = await bot.get_chat(chat_id)
+                if chat:
+                    current_action[user_id] = "add_response_keyword"
+                    target_user[user_id] = chat_id
+                    await msg.answer(
+                        f"✅ Канал `{chat_id}` выбран!\n\n"
+                        f"📝 Введи **ключевое слово**, на которое будет отвечать бот:\n"
+                        f"Пример: `привет`, `правила`, `как дела`"
+                    )
+                else:
+                    await msg.answer("❌ Бот не найден в этом канале!")
+            except:
+                await msg.answer("❌ Бот не найден в этом канале!")
+        except ValueError:
+            await msg.answer("❌ Введи корректный ID канала!")
+        return
+    
+    if action == "add_response_keyword":
+        keyword = msg.text.strip().lower()
+        if not keyword:
+            await msg.answer("❌ Введи ключевое слово!")
+            return
+        current_action[user_id] = "add_response_text"
+        target_user[user_id] = {"chat": target_user.get(user_id), "keyword": keyword}
+        await msg.answer(
+            f"📝 Ключевое слово: `{keyword}`\n\n"
+            f"Теперь введи **текст ответа**, который будет отправлять бот:\n"
+            f"Можно использовать Markdown"
+        )
+        return
+    
+    if action == "add_response_text":
+        response = msg.text.strip()
+        if not response:
+            await msg.answer("❌ Введи текст ответа!")
+            return
+        data = target_user.get(user_id)
+        if isinstance(data, dict):
+            chat_id = data.get("chat")
+            keyword = data.get("keyword")
+        else:
+            chat_id = data
+            keyword = ""
+        
+        await add_auto_response(chat_id, keyword, response, user_id)
+        await msg.answer(
+            f"✅ **Авто-ответ добавлен!**\n\n"
+            f"📢 Канал: `{chat_id}`\n"
+            f"🔑 Ключевое слово: `{keyword}`\n"
+            f"📝 Ответ: {response[:100]}...\n\n"
+            f"Для просмотра всех ответов используй `/listresponses`"
+        )
+        current_action[user_id] = None
+        target_user[user_id] = None
+        return
+    
+    if action == "remove_response_chat":
+        try:
+            chat_id = int(msg.text.strip())
+            responses = await get_all_auto_responses(chat_id)
+            if not responses:
+                await msg.answer(f"📋 В канале `{chat_id}` нет авто-ответов!")
+                return
+            
+            text = f"📋 **Авто-ответы в канале `{chat_id}`:**\n\n"
+            for keyword, response, date in responses:
+                text += f"• `{keyword}` → {response[:50]}...\n"
+            text += f"\n📝 Введи **ключевое слово**, которое хочешь удалить:"
+            
+            current_action[user_id] = "remove_response_keyword"
+            target_user[user_id] = chat_id
+            await msg.answer(text, parse_mode="Markdown")
+        except ValueError:
+            await msg.answer("❌ Введи корректный ID канала!")
+        return
+    
+    if action == "remove_response_keyword":
+        keyword = msg.text.strip().lower()
+        chat_id = target_user.get(user_id)
+        await remove_auto_response(chat_id, keyword)
+        await msg.answer(f"✅ Авто-ответ на `{keyword}` удалён!")
+        current_action[user_id] = None
+        target_user[user_id] = None
+        return
+
+# ============================================================
+# === ФИЛЬТР АВТО-ОТВЕТОВ ===
+# ============================================================
+@dp.message(F.text)
+async def auto_response_filter(msg: types.Message):
+    responses = await get_all_auto_responses(msg.chat.id)
+    if not responses:
+        return
+    
+    text = msg.text.lower()
+    for keyword, response, date in responses:
+        if keyword in text:
+            await msg.answer(response)
+            break
+
+# ============================================================
+# === ОСТАЛЬНЫЕ КОМАНДЫ ===
+# ============================================================
 @dp.message(Command("daily"))
 async def daily_bonus(msg: types.Message):
     user_id = msg.from_user.id
@@ -889,601 +1642,6 @@ async def show_stats(msg: types.Message):
     
     m = await msg.answer(text, parse_mode="Markdown")
     asyncio.create_task(delete_after(m, 30))
-
-# ============================================================
-# === ПОЛИТИКА ===
-# ============================================================
-@dp.callback_query(F.data == "policy")
-async def policy_callback(call: types.CallbackQuery):
-    await call.answer()
-    await call.message.answer(
-        "📜 **Политика бота-модератора**\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "**1. Общие положения**\n"
-        "Бот создан для поддержания порядка в чатах и каналах.\n\n"
-        
-        "**2. Запрещённый контент**\n"
-        "🚫 Угрозы и насилие\n"
-        "🚫 Терроризм и экстремизм\n"
-        "🚫 Наркотики и пропаганда наркотиков\n"
-        "🚫 Мат с фото запрещён\n\n"
-        
-        "**3. Система наказаний**\n"
-        "⚠️ 1 варн — предупреждение\n"
-        "⚠️ 3 варна — мут 5-30 минут\n"
-        "🔒 Мут — ограничение на отправку сообщений\n"
-        "🚫 Бан — 30 дней\n\n"
-        
-        "**4. Магазин**\n"
-        "🪙 За монеты:\n"
-        "• Снять варн — 500 монет\n"
-        "• Снять мут — 1000 монет\n"
-        "• Разбан — 2500 монет\n"
-        "• Одноразовая ссылка — 150 монет\n\n"
-        "⭐ За звёзды:\n"
-        "• Снять варн — 5 ⭐\n"
-        "• Снять мут — 10 ⭐\n"
-        "• Разбан — 25 ⭐\n"
-        "• Одноразовая ссылка — 2 ⭐\n\n"
-        "📦 Подписка:\n"
-        "• Безлимитные ссылки — 2000 монет/мес или 20 ⭐\n\n"
-        
-        "**5. Получение монет**\n"
-        "🎁 Ежедневный бонус — `/daily`\n"
-        "💰 Выдача админом — `/givemoney 1000`\n\n"
-        
-        "**6. Авто-ответы**\n"
-        "Настраиваются в ЛС командами:\n"
-        "📝 /addresponse\n"
-        "📋 /listresponses\n"
-        "🗑️ /removeresponse\n\n"
-        
-        "**7. Администрация**\n"
-        "👑 Главный администратор имеет полный доступ\n"
-        "🔴 Администратор — может выдавать админку\n"
-        "🟠 Модератор — может мутить и варнить\n"
-        "🟢 Наблюдатель — может выдавать варны\n\n"
-        
-        "**8. Контакты**\n"
-        "По всем вопросам обращайтесь к главному администратору.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🌴 *Соблюдайте правила и будьте вежливы!*",
-        parse_mode="Markdown"
-    )
-
-# ============================================================
-# === НОВЫЙ МАГАЗИН С РАЗДЕЛЕНИЕМ МОНЕТЫ / ЗВЁЗДЫ ===
-# ============================================================
-@dp.message(Command("shop"))
-async def shop_cmd(msg: types.Message):
-    user_id = msg.from_user.id
-    user_username = await get_username_by_id(user_id)
-    karma = await get_karma(user_id)
-    has_sub = await has_subscription(user_id)
-    
-    known_chats = [
-        (-1003018474298, "анон чат"),
-        (-1003881455978, "ришон чатик"),
-        (-1003704771166, "анон кармиэль чат"),
-    ]
-    
-    chat_buttons = []
-    for chat_id, chat_name in known_chats:
-        try:
-            chat = await bot.get_chat(chat_id)
-            if chat:
-                chat_buttons.append([InlineKeyboardButton(
-                    text=f"📢 {chat_name}",
-                    callback_data=f"shop_select_chat_{chat_id}"
-                )])
-        except:
-            pass
-    
-    if not chat_buttons:
-        for chat_id, chat_name in known_chats:
-            chat_buttons.append([InlineKeyboardButton(
-                text=f"📢 {chat_name}",
-                callback_data=f"shop_select_chat_{chat_id}"
-            )])
-    
-    chat_buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=chat_buttons)
-    
-    sub_status = "✅ Активна" if has_sub else "❌ Неактивна"
-    
-    await msg.answer(
-        f"🛍️ **Магазин**\n\n"
-        f"👤 Пользователь: {user_username}\n"
-        f"💰 Баланс: {karma} монет\n"
-        f"📦 Подписка: {sub_status}\n\n"
-        f"📌 **Выбери чат, в котором хочешь совершить покупку:**",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-@dp.callback_query(F.data.startswith("shop_select_chat_"))
-async def shop_select_chat(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    chat_id = int(call.data.replace("shop_select_chat_", ""))
-    
-    user_selected_chat[user_id] = chat_id
-    
-    try:
-        chat = await bot.get_chat(chat_id)
-        chat_name = chat.title or str(chat_id)
-    except:
-        chat_name = str(chat_id)
-    
-    warns = await get_warnings(user_id, chat_id)
-    is_muted_user = await is_muted(user_id)
-    karma = await get_karma(user_id)
-    has_sub = await has_subscription(user_id)
-    
-    has_unlimited = has_sub
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="━━━ 🪙 За монеты ━━━", callback_data="ignore")],
-        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
-        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
-        [InlineKeyboardButton(text="🔄 Разбан — 2500 монет", callback_data="shop_buy_unban")],
-        [InlineKeyboardButton(text="🔗 Одноразовая ссылка — 150 монет", callback_data="shop_buy_invite")],
-        [InlineKeyboardButton(text="━━━ ⭐ За звёзды ━━━", callback_data="ignore")],
-        [InlineKeyboardButton(text="🗑️ Снять варн — 5 ⭐", callback_data="shop_buy_stars_clear_warn")],
-        [InlineKeyboardButton(text="🔓 Снять мут — 10 ⭐", callback_data="shop_buy_stars_clear_mute")],
-        [InlineKeyboardButton(text="🔄 Разбан — 25 ⭐", callback_data="shop_buy_stars_unban")],
-        [InlineKeyboardButton(text="🔗 Одноразовая ссылка — 2 ⭐", callback_data="shop_buy_stars_invite")],
-        [InlineKeyboardButton(text="━━━ 📦 Подписка ━━━", callback_data="ignore")],
-        [InlineKeyboardButton(
-            text=f"{'✅' if has_unlimited else '❌'} Безлимитные ссылки — 2000 монет/мес",
-            callback_data="shop_buy_subscription"
-        )],
-        [InlineKeyboardButton(text="⭐ Безлимитные ссылки — 20 ⭐/мес", callback_data="shop_buy_stars_subscription")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
-        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
-    ])
-    
-    status_text = ""
-    if warns > 0:
-        status_text += f"\n⚠️ У тебя {warns} варнов"
-    if is_muted_user:
-        status_text += f"\n🔴 Ты в муте!"
-    if has_unlimited:
-        status_text += f"\n📦 Безлимитные ссылки активны!"
-    if warns == 0 and not is_muted_user:
-        status_text += f"\n✅ Нарушений нет"
-    
-    await call.message.edit_text(
-        f"🛍️ **Магазин**\n\n"
-        f"📢 Чат: {chat_name}\n"
-        f"👤 Пользователь: {await get_username_by_id(user_id)}\n"
-        f"💰 Баланс: {karma} монет\n"
-        f"📦 Подписка: {'✅ Активна' if has_unlimited else '❌ Неактивна'}{status_text}\n\n"
-        f"📌 **Выбери действие:**",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "shop_back")
-async def shop_back(call: types.CallbackQuery):
-    await shop_cmd(call.message)
-    await call.answer()
-
-@dp.callback_query(F.data == "ignore")
-async def ignore_callback(call: types.CallbackQuery):
-    await call.answer()
-
-# ============================================================
-# === ПОКУПКИ ЗА МОНЕТЫ ===
-# ============================================================
-@dp.callback_query(F.data.startswith("shop_buy_"))
-async def shop_buy(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    action = call.data.replace("shop_buy_", "")
-    chat_id = user_selected_chat.get(user_id)
-    
-    if not chat_id:
-        await call.answer("❌ Сначала выбери чат!", show_alert=True)
-        return
-    
-    try:
-        chat = await bot.get_chat(chat_id)
-        chat_name = chat.title or str(chat_id)
-    except:
-        chat_name = str(chat_id)
-    
-    karma = await get_karma(user_id)
-    
-    if action == "clear_warn":
-        if karma < COIN_PRICES["clear_warn"]:
-            await call.answer(f"❌ Нужно {COIN_PRICES['clear_warn']} монет!", show_alert=True)
-            return
-        warns = await get_warnings(user_id, chat_id)
-        if warns == 0:
-            await call.answer("❌ У тебя нет варнов!", show_alert=True)
-            return
-        await clear_warnings(user_id, chat_id)
-        await add_karma(user_id, -COIN_PRICES["clear_warn"])
-        await call.answer("✅ Варны сняты!", show_alert=True)
-        await call.message.edit_text(
-            f"✅ **Варны сняты!**\n\n"
-            f"📢 Чат: {chat_name}\n"
-            f"💰 Остаток: {await get_karma(user_id)} монет",
-            parse_mode="Markdown"
-        )
-        return
-    
-    if action == "clear_mute":
-        if karma < COIN_PRICES["clear_mute"]:
-            await call.answer(f"❌ Нужно {COIN_PRICES['clear_mute']} монет!", show_alert=True)
-            return
-        if not await is_muted(user_id):
-            await call.answer("❌ Ты не в муте!", show_alert=True)
-            return
-        await remove_mute(user_id)
-        await add_karma(user_id, -COIN_PRICES["clear_mute"])
-        await call.answer("✅ Мут снят!", show_alert=True)
-        await call.message.edit_text(
-            f"✅ **Мут снят!**\n\n"
-            f"📢 Чат: {chat_name}\n"
-            f"💰 Остаток: {await get_karma(user_id)} монет",
-            parse_mode="Markdown"
-        )
-        return
-    
-    if action == "unban":
-        if karma < COIN_PRICES["unban"]:
-            await call.answer(f"❌ Нужно {COIN_PRICES['unban']} монет!", show_alert=True)
-            return
-        if await is_muted(user_id):
-            await remove_mute(user_id)
-        await clear_warnings(user_id, chat_id)
-        await add_karma(user_id, -COIN_PRICES["unban"])
-        await call.answer("✅ Разбан выполнен!", show_alert=True)
-        await call.message.edit_text(
-            f"✅ **Разбан выполнен!**\n\n"
-            f"📢 Чат: {chat_name}\n"
-            f"💰 Остаток: {await get_karma(user_id)} монет",
-            parse_mode="Markdown"
-        )
-        return
-    
-    if action == "invite":
-        if karma < COIN_PRICES["invite"]:
-            await call.answer(f"❌ Нужно {COIN_PRICES['invite']} монет!", show_alert=True)
-            return
-        try:
-            invite_link = await bot.create_chat_invite_link(chat_id, member_limit=1)
-            await add_karma(user_id, -COIN_PRICES["invite"])
-            await call.answer("✅ Ссылка создана!", show_alert=True)
-            await call.message.edit_text(
-                f"✅ **Одноразовая ссылка!**\n\n"
-                f"📢 Чат: {chat_name}\n"
-                f"🔗 {invite_link.invite_link}\n"
-                f"💰 Остаток: {await get_karma(user_id)} монет",
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-        except Exception as e:
-            await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
-        return
-    
-    if action == "subscription":
-        if karma < SUBSCRIPTION_PRICE:
-            await call.answer(f"❌ Нужно {SUBSCRIPTION_PRICE} монет!", show_alert=True)
-            return
-        await add_subscription(user_id, 30)
-        await add_karma(user_id, -SUBSCRIPTION_PRICE)
-        await call.answer("✅ Подписка оформлена на 30 дней!", show_alert=True)
-        await call.message.edit_text(
-            f"✅ **Подписка оформлена!**\n\n"
-            f"📢 Чат: {chat_name}\n"
-            f"📦 Безлимитные ссылки на 30 дней!\n"
-            f"💰 Остаток: {await get_karma(user_id)} монет",
-            parse_mode="Markdown"
-        )
-        return
-    
-    if action.startswith("stars_"):
-        action_type = action.replace("stars_", "")
-        
-        if action_type == "clear_warn":
-            stars_needed = STARS_PRICES.get("clear_warn", 5)
-            stars = await get_user_stars(user_id)
-            if stars < stars_needed:
-                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
-                return
-            warns = await get_warnings(user_id, chat_id)
-            if warns == 0:
-                await call.answer("❌ У тебя нет варнов!", show_alert=True)
-                return
-            await clear_warnings(user_id, chat_id)
-            await remove_stars(user_id, stars_needed)
-            await call.answer("✅ Варны сняты!", show_alert=True)
-            await call.message.edit_text(
-                f"✅ **Варны сняты за звёзды!**\n\n"
-                f"📢 Чат: {chat_name}\n"
-                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
-                parse_mode="Markdown"
-            )
-            return
-        
-        if action_type == "clear_mute":
-            stars_needed = STARS_PRICES.get("clear_mute", 10)
-            stars = await get_user_stars(user_id)
-            if stars < stars_needed:
-                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
-                return
-            if not await is_muted(user_id):
-                await call.answer("❌ Ты не в муте!", show_alert=True)
-                return
-            await remove_mute(user_id)
-            await remove_stars(user_id, stars_needed)
-            await call.answer("✅ Мут снят!", show_alert=True)
-            await call.message.edit_text(
-                f"✅ **Мут снят за звёзды!**\n\n"
-                f"📢 Чат: {chat_name}\n"
-                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
-                parse_mode="Markdown"
-            )
-            return
-        
-        if action_type == "unban":
-            stars_needed = STARS_PRICES.get("unban", 25)
-            stars = await get_user_stars(user_id)
-            if stars < stars_needed:
-                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
-                return
-            if await is_muted(user_id):
-                await remove_mute(user_id)
-            await clear_warnings(user_id, chat_id)
-            await remove_stars(user_id, stars_needed)
-            await call.answer("✅ Разбан выполнен!", show_alert=True)
-            await call.message.edit_text(
-                f"✅ **Разбан за звёзды!**\n\n"
-                f"📢 Чат: {chat_name}\n"
-                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
-                parse_mode="Markdown"
-            )
-            return
-        
-        if action_type == "invite":
-            stars_needed = STARS_PRICES.get("invite", 2)
-            stars = await get_user_stars(user_id)
-            if stars < stars_needed:
-                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
-                return
-            try:
-                invite_link = await bot.create_chat_invite_link(chat_id, member_limit=1)
-                await remove_stars(user_id, stars_needed)
-                await call.answer("✅ Ссылка создана!", show_alert=True)
-                await call.message.edit_text(
-                    f"✅ **Одноразовая ссылка за звёзды!**\n\n"
-                    f"📢 Чат: {chat_name}\n"
-                    f"🔗 {invite_link.invite_link}\n"
-                    f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
-            except Exception as e:
-                await call.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)
-            return
-        
-        if action_type == "subscription":
-            stars_needed = SUBSCRIPTION_STARS
-            stars = await get_user_stars(user_id)
-            if stars < stars_needed:
-                await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
-                return
-            await add_subscription(user_id, 30)
-            await remove_stars(user_id, stars_needed)
-            await call.answer("✅ Подписка оформлена на 30 дней!", show_alert=True)
-            await call.message.edit_text(
-                f"✅ **Подписка за звёзды!**\n\n"
-                f"📢 Чат: {chat_name}\n"
-                f"📦 Безлимитные ссылки на 30 дней!\n"
-                f"⭐ Остаток: {await get_user_stars(user_id)} ⭐",
-                parse_mode="Markdown"
-            )
-            return
-    
-    await call.answer("❌ Неизвестное действие")
-
-@dp.callback_query(F.data == "shop_close")
-async def shop_close(call: types.CallbackQuery):
-    await call.message.delete()
-    await call.answer("🛍️ Магазин закрыт")
-
-# ============================================================
-# === КОМАНДА /addresponse ===
-# ============================================================
-@dp.message(Command("addresponse"))
-async def add_response_start(msg: types.Message):
-    user_id = msg.from_user.id
-    level = await get_user_level(user_id)
-    if level < 3:
-        await msg.answer("⛔ Нет прав!")
-        return
-    
-    if msg.chat.type != "private":
-        await msg.answer("❌ Эта команда работает только в ЛС!")
-        return
-    
-    global current_action
-    current_action[user_id] = "add_response_chat"
-    await msg.answer(
-        "📝 **Настройка авто-ответа**\n\n"
-        "Введи ID канала, для которого хочешь настроить авто-ответ:\n"
-        "Пример: `-1003018474298`"
-    )
-
-@dp.message(Command("listresponses"))
-async def list_responses(msg: types.Message):
-    user_id = msg.from_user.id
-    if msg.chat.type != "private":
-        await msg.answer("❌ Только в ЛС!")
-        return
-    
-    level = await get_user_level(user_id)
-    if level < 3:
-        await msg.answer("⛔ Нет прав!")
-        return
-    
-    chats = await get_all_chats_with_auto_responses()
-    if not chats:
-        await msg.answer("📋 Нет настроенных авто-ответов ни для одного канала.")
-        return
-    
-    text = "📋 **Каналы с авто-ответами:**\n\n"
-    for chat_id in chats:
-        try:
-            chat = await bot.get_chat(chat_id)
-            chat_name = chat.title or str(chat_id)
-        except:
-            chat_name = str(chat_id)
-        responses = await get_all_auto_responses(chat_id)
-        text += f"📢 {chat_name} (`{chat_id}`) — {len(responses)} правил\n"
-    
-    await msg.answer(text, parse_mode="Markdown")
-
-@dp.message(Command("removeresponse"))
-async def remove_response_start(msg: types.Message):
-    user_id = msg.from_user.id
-    if msg.chat.type != "private":
-        await msg.answer("❌ Только в ЛС!")
-        return
-    
-    level = await get_user_level(user_id)
-    if level < 3:
-        await msg.answer("⛔ Нет прав!")
-        return
-    
-    global current_action
-    current_action[user_id] = "remove_response_chat"
-    await msg.answer(
-        "📝 **Удаление авто-ответа**\n\n"
-        "Введи ID канала, из которого хочешь удалить авто-ответ:\n"
-        "Пример: `-1003018474298`"
-    )
-
-# ============================================================
-# === ОБРАБОТЧИКИ ВВОДА ДЛЯ АВТО-ОТВЕТОВ ===
-# ============================================================
-@dp.message()
-async def auto_response_input(msg: types.Message):
-    user_id = msg.from_user.id
-    action = current_action.get(user_id)
-    
-    if not action:
-        return
-    
-    if msg.chat.type != "private":
-        return
-    
-    if action == "add_response_chat":
-        try:
-            chat_id = int(msg.text.strip())
-            try:
-                chat = await bot.get_chat(chat_id)
-                if chat:
-                    current_action[user_id] = "add_response_keyword"
-                    target_user[user_id] = chat_id
-                    await msg.answer(
-                        f"✅ Канал `{chat_id}` выбран!\n\n"
-                        f"📝 Введи **ключевое слово**, на которое будет отвечать бот:\n"
-                        f"Пример: `привет`, `правила`, `как дела`"
-                    )
-                else:
-                    await msg.answer("❌ Бот не найден в этом канале!")
-            except:
-                await msg.answer("❌ Бот не найден в этом канале!")
-        except ValueError:
-            await msg.answer("❌ Введи корректный ID канала!")
-        return
-    
-    if action == "add_response_keyword":
-        keyword = msg.text.strip().lower()
-        if not keyword:
-            await msg.answer("❌ Введи ключевое слово!")
-            return
-        current_action[user_id] = "add_response_text"
-        target_user[user_id] = {"chat": target_user.get(user_id), "keyword": keyword}
-        await msg.answer(
-            f"📝 Ключевое слово: `{keyword}`\n\n"
-            f"Теперь введи **текст ответа**, который будет отправлять бот:\n"
-            f"Можно использовать Markdown"
-        )
-        return
-    
-    if action == "add_response_text":
-        response = msg.text.strip()
-        if not response:
-            await msg.answer("❌ Введи текст ответа!")
-            return
-        data = target_user.get(user_id)
-        if isinstance(data, dict):
-            chat_id = data.get("chat")
-            keyword = data.get("keyword")
-        else:
-            chat_id = data
-            keyword = ""
-        
-        await add_auto_response(chat_id, keyword, response, user_id)
-        await msg.answer(
-            f"✅ **Авто-ответ добавлен!**\n\n"
-            f"📢 Канал: `{chat_id}`\n"
-            f"🔑 Ключевое слово: `{keyword}`\n"
-            f"📝 Ответ: {response[:100]}...\n\n"
-            f"Для просмотра всех ответов используй `/listresponses`"
-        )
-        current_action[user_id] = None
-        target_user[user_id] = None
-        return
-    
-    if action == "remove_response_chat":
-        try:
-            chat_id = int(msg.text.strip())
-            responses = await get_all_auto_responses(chat_id)
-            if not responses:
-                await msg.answer(f"📋 В канале `{chat_id}` нет авто-ответов!")
-                return
-            
-            text = f"📋 **Авто-ответы в канале `{chat_id}`:**\n\n"
-            for keyword, response, date in responses:
-                text += f"• `{keyword}` → {response[:50]}...\n"
-            text += f"\n📝 Введи **ключевое слово**, которое хочешь удалить:"
-            
-            current_action[user_id] = "remove_response_keyword"
-            target_user[user_id] = chat_id
-            await msg.answer(text, parse_mode="Markdown")
-        except ValueError:
-            await msg.answer("❌ Введи корректный ID канала!")
-        return
-    
-    if action == "remove_response_keyword":
-        keyword = msg.text.strip().lower()
-        chat_id = target_user.get(user_id)
-        await remove_auto_response(chat_id, keyword)
-        await msg.answer(f"✅ Авто-ответ на `{keyword}` удалён!")
-        current_action[user_id] = None
-        target_user[user_id] = None
-        return
-
-# ============================================================
-# === ФИЛЬТР АВТО-ОТВЕТОВ В ЧАТАХ ===
-# ============================================================
-@dp.message(F.text)
-async def auto_response_filter(msg: types.Message):
-    responses = await get_all_auto_responses(msg.chat.id)
-    if not responses:
-        return
-    
-    text = msg.text.lower()
-    for keyword, response, date in responses:
-        if keyword in text:
-            await msg.answer(response)
-            break
 
 # ============================================================
 # === КНОПКА "Полная статистика" ===
