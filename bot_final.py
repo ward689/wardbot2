@@ -18,7 +18,7 @@ from states import AdminStates, AutoResponseStates, RealShopStates
 from aiohttp import web
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.USER_IN_ALL_CHATS)
+dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.GLOBAL)
 
 user_selected_chat = {}
 
