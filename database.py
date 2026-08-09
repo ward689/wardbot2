@@ -1,6 +1,7 @@
 import aiosqlite
+import random
 import time
-from config import ADMIN_IDS, DB_NAME
+from config import ADMIN_IDS, DAILY_BONUS_MAX, DAILY_BONUS_MIN, DAILY_BONUS_STREAK_BONUS, DB_NAME
 
 _username_resolver = None
 
@@ -143,6 +144,25 @@ async def init_db():
         """)
         
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_seen INTEGER
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
+        
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS chat_members (
+                chat_id INTEGER,
+                user_id INTEGER,
+                last_seen INTEGER,
+                PRIMARY KEY (chat_id, user_id)
+            )
+        """)
+        
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 user_id INTEGER PRIMARY KEY,
                 until INTEGER,
@@ -157,6 +177,52 @@ async def init_db():
         for domain in WHITELIST_DOMAINS:
             await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, 0))
         await db.commit()
+
+# === ПОЛЬЗОВАТЕЛИ ===
+async def remember_user(user_id: int, username: str = None, first_name: str = None):
+    """Кэширует связку @username → user_id: Bot API не умеет искать людей по юзернейму."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO users (user_id, username, first_name, last_seen) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "username = excluded.username, first_name = excluded.first_name, last_seen = excluded.last_seen",
+            (user_id, (username or "").lower() or None, first_name, int(time.time()))
+        )
+        await db.commit()
+
+async def remember_chat_member(chat_id: int, user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO chat_members (chat_id, user_id, last_seen) VALUES (?, ?, ?) "
+            "ON CONFLICT(chat_id, user_id) DO UPDATE SET last_seen = excluded.last_seen",
+            (chat_id, user_id, int(time.time()))
+        )
+        await db.commit()
+
+async def get_known_chat_members(chat_id: int) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id FROM chat_members WHERE chat_id = ?", (chat_id,))
+        return [row[0] for row in await cursor.fetchall()]
+
+async def get_user_id_by_username(username: str):
+    username = username.lstrip("@").lower()
+    if not username:
+        return None
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        result = await cursor.fetchone()
+        return result[0] if result else None
+
+async def get_cached_username(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT username, first_name FROM users WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        if not result:
+            return None
+        username, first_name = result
+        if username:
+            return f"@{username}"
+        return first_name or None
 
 # === ВАРНЫ ===
 async def add_warning(user_id, chat_id, reason, admin_id=0):
@@ -369,11 +435,12 @@ async def get_daily_bonus(user_id: int) -> tuple:
         now = int(time.time())
         day = 86400
         if not result:
-            return True, 100, 1, 0
+            return True, random.randint(DAILY_BONUS_MIN, DAILY_BONUS_MAX), 1, 0
         last_claim, streak = result
         elapsed = now - last_claim
         if elapsed >= day:
-            return True, 100 + (streak * 10), streak + 1, 0
+            amount = random.randint(DAILY_BONUS_MIN, DAILY_BONUS_MAX) + streak * DAILY_BONUS_STREAK_BONUS
+            return True, amount, streak + 1, 0
         return False, 0, streak, day - elapsed
 
 async def claim_daily(user_id: int):
