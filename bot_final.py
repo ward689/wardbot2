@@ -2412,10 +2412,291 @@ async def start_web():
     await site.start()
     print("✅ Веб-сервер запущен")
     await asyncio.Event().wait()
+# ============================================================
+# === REAL SHOP: ОБРАБОТЧИКИ КНОПОК ===
+# ============================================================
+pending_real_purchases = {}  # user_id -> {"item": ..., "data": {...}}
+
+@dp.callback_query(F.data == "realshop_open")
+async def realshop_open_cb(call: types.CallbackQuery):
+    await call.message.delete()
+    await realshop_cmd(call.message)
+    await call.answer()
+
+@dp.callback_query(F.data == "realshop_close")
+async def realshop_close_cb(call: types.CallbackQuery):
+    await call.message.delete()
+    await call.answer("Закрыто")
+
+@dp.callback_query(F.data.startswith("real_buy_"))
+async def real_buy_cb(call: types.CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    item = call.data.replace("real_buy_", "")
+
+    # Товары, требующие настройки через ЛС
+    if item == "congratulation":
+        await state.set_state(RealShopStates.congrat_target)
+        await call.message.answer(
+            "🎉 **Поздравление в чате**\n\n"
+            "📝 Введи @username кого хочешь поздравить:\n\n"
+            "⚠️ **Важно:** Бот не несёт ответственности, если получатель не написал ему в ЛС. "
+            "Для корректной работы получатель должен первым написать боту /start."
+        )
+        await call.answer()
+        return
+
+    if item == "gift_coins":
+        await state.set_state(RealShopStates.gift_amount)
+        await call.message.answer(
+            "🎁 **Подарить монеты другу**\n\n"
+            "💰 Введи количество монет, которое хочешь подарить:"
+        )
+        await call.answer()
+        return
+
+    if item == "anonymous_message":
+        await state.set_state(RealShopStates.anon_target)
+        await call.message.answer(
+            "💌 **Анонимное послание**\n\n"
+            "📝 Введи @username кому отправить анонимное послание:"
+        )
+        await call.answer()
+        return
+
+    # Обычные товары — сразу на оплату
+    prices_map = {
+        "clear_warn": STARS_PRICES["clear_warn"],
+        "clear_mute": STARS_PRICES["clear_mute"],
+        "unban": STARS_PRICES["unban"],
+        "instant_unmute": STARS_PRICES["instant_unmute"],
+        "pin_message": STARS_PRICES["pin_message"],
+        "daily_boost": STARS_PRICES["daily_boost_x3"],
+        "unlimited_forever": STARS_PRICES["unlimited_links_forever"],
+    }
+
+    if item not in prices_map:
+        await call.answer("❌ Товар не найден!", show_alert=True)
+        return
+
+    price = prices_map[item]
+    pending_real_purchases[user_id] = {"item": item, "chat_id": call.message.chat.id}
+
+    await call.message.answer_invoice(
+        title=f"Покупка: {item}",
+        description=f"⭐ Цена: {price} звёзд. Услуга активируется после оплаты.",
+        payload=f"real_{item}",
+        currency="XTR",
+        prices=[LabeledPrice(label="Оплата", amount=price)]
+    )
+    await call.answer()
+
+# === FSM: Поздравление ===
+@dp.message(RealShopStates.congrat_target)
+async def congrat_target_handler(msg: types.Message, state: FSMContext):
+    target = msg.text.strip()
+    await state.update_data(target=target)
+    await state.set_state(RealShopStates.congrat_text)
+    await msg.answer("📝 Теперь введи текст поздравления:")
+
+@dp.message(RealShopStates.congrat_text)
+async def congrat_text_handler(msg: types.Message, state: FSMContext):
+    text = msg.text.strip()
+    data = await state.get_data()
+    await state.clear()
+
+    user_id = msg.from_user.id
+    pending_real_purchases[user_id] = {
+        "item": "congratulation",
+        "chat_id": msg.chat.id,
+        "target": data.get("target"),
+        "text": text
+    }
+
+    await msg.answer_invoice(
+        title="🎉 Поздравление в чате",
+        description=f"⭐ Цена: {STARS_PRICES['congratulation']} звёзд",
+        payload="real_congratulation",
+        currency="XTR",
+        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["congratulation"])]
+    )
+
+# === FSM: Подарок монет ===
+@dp.message(RealShopStates.gift_amount)
+async def gift_amount_handler(msg: types.Message, state: FSMContext):
+    try:
+        amount = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ Введи число!")
+        return
+    if amount <= 0:
+        await msg.answer("❌ Количество должно быть больше 0!")
+        return
+    await state.update_data(amount=amount)
+    await state.set_state(RealShopStates.gift_target)
+    await msg.answer("📝 Теперь введи @username получателя:")
+
+@dp.message(RealShopStates.gift_target)
+async def gift_target_handler(msg: types.Message, state: FSMContext):
+    target = msg.text.strip()
+    data = await state.get_data()
+    await state.clear()
+
+    user_id = msg.from_user.id
+    pending_real_purchases[user_id] = {
+        "item": "gift_coins",
+        "chat_id": msg.chat.id,
+        "amount": data.get("amount"),
+        "target": target
+    }
+
+    await msg.answer_invoice(
+        title="🎁 Подарить монеты",
+        description=f"⭐ Цена услуги: {STARS_PRICES['gift_coins']} звёзд",
+        payload="real_gift_coins",
+        currency="XTR",
+        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["gift_coins"])]
+    )
+
+# === FSM: Анонимное послание ===
+@dp.message(RealShopStates.anon_target)
+async def anon_target_handler(msg: types.Message, state: FSMContext):
+    target = msg.text.strip()
+    await state.update_data(target=target)
+    await state.set_state(RealShopStates.anon_text)
+    await msg.answer("📝 Теперь введи текст анонимного послания:")
+
+@dp.message(RealShopStates.anon_text)
+async def anon_text_handler(msg: types.Message, state: FSMContext):
+    text = msg.text.strip()
+    data = await state.get_data()
+    await state.clear()
+
+    user_id = msg.from_user.id
+    pending_real_purchases[user_id] = {
+        "item": "anonymous_message",
+        "chat_id": msg.chat.id,
+        "target": data.get("target"),
+        "text": text
+    }
+
+    await msg.answer_invoice(
+        title="💌 Анонимное послание",
+        description=f"⭐ Цена: {STARS_PRICES['anonymous_message']} звёзд",
+        payload="real_anonymous_message",
+        currency="XTR",
+        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["anonymous_message"])]
+    )
 
 # ============================================================
-# === ЗАПУСК ===
+# === ОБРАБОТКА ПЛАТЕЖЕЙ ===
 # ============================================================
+@dp.pre_checkout_query()
+async def pre_checkout_handler(pre_checkout_q: PreCheckoutQuery):
+    await pre_checkout_q.answer(ok=True)
+
+@dp.message(F.successful_payment)
+async def successful_payment_handler(msg: types.Message):
+    user_id = msg.from_user.id
+    purchase = pending_real_purchases.pop(user_id, None)
+
+    if not purchase:
+        await msg.answer("✅ Оплата получена, но покупка не найдена. Напиши в поддержку.")
+        return
+
+    item = purchase["item"]
+    chat_id = purchase.get("chat_id")
+    await msg.answer("✅ **Оплата успешна!** Активирую услугу...", parse_mode="Markdown")
+
+    # --- Снять варн ---
+    if item == "clear_warn":
+        await clear_warnings(user_id, chat_id)
+        await msg.answer("🗑️ Варны сняты!")
+
+    # --- Снять мут ---
+    elif item == "clear_mute":
+        await remove_mute(user_id)
+        await msg.answer("🔓 Мут снят!")
+
+    # --- Разбан ---
+    elif item == "unban":
+        await remove_mute(user_id)
+        await clear_warnings(user_id, chat_id)
+        await msg.answer("🔄 Разбан выполнен!")
+
+    # --- Мгновенный размут ---
+    elif item == "instant_unmute":
+        await remove_mute(user_id)
+        await msg.answer("⚡ Мгновенный размут выполнен!")
+
+    # --- Закреп ---
+    elif item == "pin_message":
+        await msg.answer("📌 Ответь на сообщение, которое хочешь закрепить, командой /pin")
+
+    # --- Безлимит навсегда ---
+    elif item == "unlimited_forever":
+        await set_subscription_forever(user_id)
+        await msg.answer("🔗 Безлимитные ссылки активированы навсегда!")
+
+    # --- Ускоренный daily ---
+    elif item == "daily_boost":
+        await set_daily_boost(user_id, days=7, multiplier=3)
+        await msg.answer("⏩ Ускоренный /daily x3 активирован на 7 дней!")
+
+    # --- Поздравление ---
+    elif item == "congratulation":
+        target_username = purchase.get("target", "").replace("@", "")
+        text = purchase.get("text", "С праздником! 🎉")
+        target_id = await resolve_user(target_username)
+        if target_id and chat_id:
+            try:
+                await bot.send_message(
+                    chat_id,
+                    f"🎉 **Поздравление!**\n\n"
+                    f"👤 Для: @{target_username}\n\n"
+                    f"💬 {text}\n\n"
+                    f"🎁 От: {await get_username_by_id(user_id)}",
+                    parse_mode="Markdown"
+                )
+                await msg.answer("✅ Поздравление отправлено в чат!")
+            except Exception as e:
+                await msg.answer(f"❌ Не удалось отправить поздравление: {e}")
+        else:
+            await msg.answer("❌ Получатель не найден. Убедись, что он написал боту /start в ЛС.")
+
+    # --- Подарок монет ---
+    elif item == "gift_coins":
+        target_username = purchase.get("target", "").replace("@", "")
+        amount = purchase.get("amount", 0)
+        target_id = await resolve_user(target_username)
+        if target_id:
+            sender_karma = await get_karma(user_id)
+            if sender_karma >= amount:
+                await add_karma(user_id, -amount)
+                await add_karma(target_id, amount)
+                await msg.answer(f"🎁 Подарено {amount} монет пользователю @{target_username}!")
+            else:
+                await msg.answer("❌ Недостаточно монет для подарка!")
+        else:
+            await msg.answer("❌ Получатель не найден.")
+
+    # --- Анонимное послание ---
+    elif item == "anonymous_message":
+        target_username = purchase.get("target", "").replace("@", "")
+        text = purchase.get("text", "")
+        target_id = await resolve_user(target_username)
+        if target_id:
+            try:
+                await bot.send_message(
+                    target_id,
+                    f"💌 **Анонимное послание**\n\n{text}\n\n🤫 Отправитель пожелал остаться анонимным.",
+                    parse_mode="Markdown"
+                )
+                await msg.answer("✅ Анонимное послание доставлено!")
+            except:
+                await msg.answer("❌ Не удалось доставить послание. Пользователь не писал боту.")
+        else:
+            await msg.answer("❌ Получатель не найден.")
+
 async def main():
     print("☀️ Запуск бота...")
     await init_db()
