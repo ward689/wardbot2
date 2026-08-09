@@ -625,3 +625,43 @@ async def get_subscription_until(user_id: int) -> int:
         cursor = await db.execute("SELECT until FROM subscriptions WHERE user_id = ?", (user_id,))
         result = await cursor.fetchone()
         return result[0] if result else 0
+
+# === ПОДПИСКА НАВСЕГДА ===
+async def set_subscription_forever(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO subscriptions (user_id, until, type) VALUES (?, ?, ?)",
+            (user_id, 9999999999, "unlimited_invites")
+        )
+        await db.commit()
+
+# === БУСТ DAILY ===
+async def set_daily_boost(user_id: int, days: int = 7, multiplier: int = 3):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS daily_boosts (
+                user_id INTEGER PRIMARY KEY,
+                until INTEGER,
+                multiplier INTEGER DEFAULT 3
+            )
+        """)
+        await db.execute(
+            "INSERT OR REPLACE INTO daily_boosts (user_id, until, multiplier) VALUES (?, ?, ?)",
+            (user_id, int(time.time()) + days * 86400, multiplier)
+        )
+        await db.commit()
+
+async def get_daily_boost(user_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS daily_boosts (
+                user_id INTEGER PRIMARY KEY,
+                until INTEGER,
+                multiplier INTEGER DEFAULT 3
+            )
+        """)
+        cursor = await db.execute("SELECT until, multiplier FROM daily_boosts WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        if result and result[0] > int(time.time()):
+            return result[1]
+        return 1
