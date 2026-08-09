@@ -153,6 +153,15 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
         
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS chat_members (
+                chat_id INTEGER,
+                user_id INTEGER,
+                last_seen INTEGER,
+                PRIMARY KEY (chat_id, user_id)
+            )
+        """)
+        
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 user_id INTEGER PRIMARY KEY,
                 until INTEGER,
@@ -179,6 +188,20 @@ async def remember_user(user_id: int, username: str = None, first_name: str = No
             (user_id, (username or "").lower() or None, first_name, int(time.time()))
         )
         await db.commit()
+
+async def remember_chat_member(chat_id: int, user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO chat_members (chat_id, user_id, last_seen) VALUES (?, ?, ?) "
+            "ON CONFLICT(chat_id, user_id) DO UPDATE SET last_seen = excluded.last_seen",
+            (chat_id, user_id, int(time.time()))
+        )
+        await db.commit()
+
+async def get_known_chat_members(chat_id: int) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id FROM chat_members WHERE chat_id = ?", (chat_id,))
+        return [row[0] for row in await cursor.fetchall()]
 
 async def get_user_id_by_username(username: str):
     username = username.lstrip("@").lower()
