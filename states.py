@@ -1,13 +1,11 @@
 from aiogram.fsm.state import State, StatesGroup
 
-
 class AutoResponseStates(StatesGroup):
     add_response_chat = State()
     add_response_keyword = State()
     add_response_text = State()
     remove_response_chat = State()
     remove_response_keyword = State()
-
 
 class AdminStates(StatesGroup):
     set_mute_duration = State()
@@ -29,3 +27,15 @@ class AdminStates(StatesGroup):
     setup_owner = State()
     add_whitelist = State()
     remove_whitelist = State()
+
+# === НОВЫЕ СОСТОЯНИЯ ДЛЯ REALSHOP ===
+class RealShopStates(StatesGroup):
+    # Поздравление
+    congrat_target = State()
+    congrat_text = State()
+    # Подарок монет
+    gift_amount = State()
+    gift_target = State()
+    # Анонимное послание
+    anon_target = State()
+    anon_text = State()
