@@ -187,6 +187,16 @@ async def send_log(channel_id: int, action: str, details: str):
     except Exception as e:
         print(f"Ошибка лога: {e}")
 
+async def log_action(chat_id: int, admin_id: int, action: str, target_id: int = None, details: str = ""):
+    """Пишет действие админа и в базу, и в лог-канал."""
+    await log_admin_action(admin_id, action, target_id, details)
+    body = f"👮 Админ: {await get_username_by_id(admin_id)}\n"
+    if target_id:
+        body += f"👤 Пользователь: {await get_username_by_id(target_id)} (`{target_id}`)\n"
+    if details:
+        body += f"📝 {details}\n"
+    await send_log(chat_id, action, body)
+
 # ============================================================
 # === КНОПКИ ===
 # ============================================================
@@ -359,10 +369,10 @@ async def give_admin(msg: types.Message):
         return
     
     await set_user_level(target_id, new_level)
-    await log_admin_action(user_id, f"👑 Выдана админка ({new_level})", target_id, f"Новый уровень: {new_level}")
     
     target_name = await get_username_by_id(target_id)
     level_name = ADMIN_LEVELS.get(new_level, {}).get("name", "Участник")
+    await log_action(msg.chat.id, user_id, "👑 Выдана админка", target_id, f"Уровень: {new_level} ({level_name})")
     level_emoji = ADMIN_LEVELS.get(new_level, {}).get("emoji", "👤")
     
     await msg.answer(
@@ -491,12 +501,9 @@ async def give_money(msg: types.Message):
             f"👮 Выдал: {await get_username_by_id(user_id)}"
         )
         
-        await send_log(
-            chat_id,
-            "💰 Выдача монет",
-            f"👮 Админ: {await get_username_by_id(user_id)}\n"
-            f"📌 Сумма: {amount} монет каждому\n"
-            f"👥 Получили: {count} участников"
+        await log_action(
+            chat_id, user_id, "💰 Выдача монет", None,
+            f"Сумма: {amount} монет каждому, получили {count} участников"
         )
         
     except Exception as e:
@@ -1705,10 +1712,12 @@ async def handle_callbacks(call: types.CallbackQuery, state: FSMContext):
         if action == "enabled":
             settings['enabled'] = not settings['enabled']
             await update_channel_settings(chat_id, settings)
+            await log_action(chat_id, call.from_user.id, "⚙️ Модерация", None, f"{'включена' if settings['enabled'] else 'выключена'}")
             await call.answer(f"✅ Модерация {'включена' if settings['enabled'] else 'выключена'}")
         elif action == "block_new":
             settings['block_new_accounts'] = not settings['block_new_accounts']
             await update_channel_settings(chat_id, settings)
+            await log_action(chat_id, call.from_user.id, "⚙️ Блокировка новых аккаунтов", None, f"{'включена' if settings['block_new_accounts'] else 'выключена'}")
             await call.answer(f"✅ Блокировка {'включена' if settings['block_new_accounts'] else 'выключена'}")
         elif action == "show":
             text = f"⚙️ **Настройки канала**\n\n"
@@ -1962,6 +1971,7 @@ async def admin_warn_handler(msg: types.Message, state: FSMContext):
     was_auto_muted, mute_duration = await add_warning(target_id, msg.chat.id, "Нарушение", msg.from_user.id)
     warns = await get_warnings(target_id, msg.chat.id)
     settings = await get_channel_settings(msg.chat.id)
+    await log_action(msg.chat.id, msg.from_user.id, "⚠️ Варн", target_id, f"Варнов: {warns}/{settings['warn_limit']}")
     if was_auto_muted:
         m = await msg.answer(f"⚠️ {warns} варнов! Мут {mute_duration//60} мин!")
     else:
@@ -1989,6 +1999,7 @@ async def admin_clear_warns_handler(msg: types.Message, state: FSMContext):
         asyncio.create_task(delete_after(m, 10))
         return
     await clear_warnings(target_id, msg.chat.id)
+    await log_action(msg.chat.id, msg.from_user.id, "🗑️ Очищены варны", target_id)
     m = await msg.answer(f"✅ Варны очищены")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2016,6 +2027,7 @@ async def admin_mute_duration_handler(msg: types.Message, state: FSMContext):
     data = await state.get_data()
     target_id = data.get("target_id")
     await add_mute(target_id, duration)
+    await log_action(msg.chat.id, msg.from_user.id, "🔒 Мут", target_id, f"Длительность: {duration} сек")
     m = await msg.answer(f"✅ Замучен на {duration}с")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2028,6 +2040,7 @@ async def admin_unmute_handler(msg: types.Message, state: FSMContext):
         asyncio.create_task(delete_after(m, 10))
         return
     await remove_mute(target_id)
+    await log_action(msg.chat.id, msg.from_user.id, "🔓 Размут", target_id)
     m = await msg.answer(f"✅ Размучен")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2040,6 +2053,7 @@ async def admin_set_moderator_handler(msg: types.Message, state: FSMContext):
         asyncio.create_task(delete_after(m, 10))
         return
     await set_user_level(target_id, 2)
+    await log_action(msg.chat.id, msg.from_user.id, "👑 Выдана админка", target_id, "Уровень: 2 (Модератор)")
     m = await msg.answer(f"🛡️ Модератор (уровень 2)")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2052,6 +2066,7 @@ async def admin_set_admin_handler(msg: types.Message, state: FSMContext):
         asyncio.create_task(delete_after(m, 10))
         return
     await set_user_level(target_id, 3)
+    await log_action(msg.chat.id, msg.from_user.id, "👑 Выдана админка", target_id, "Уровень: 3 (Администратор)")
     m = await msg.answer(f"🔴 Администратор (уровень 3)")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2091,6 +2106,7 @@ async def admin_set_level_input_handler(msg: types.Message, state: FSMContext):
     target_id = data.get("target_id")
     await set_user_level(target_id, new_level)
     name = ADMIN_LEVELS[new_level]["name"] if new_level > 0 else "Участник"
+    await log_action(msg.chat.id, msg.from_user.id, "👑 Изменён уровень", target_id, f"Уровень: {new_level} ({name})")
     m = await msg.answer(f"✅ Уровень {new_level} ({name})")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2118,6 +2134,7 @@ async def admin_setup_operator_handler(msg: types.Message, state: FSMContext):
         asyncio.create_task(delete_after(m, 10))
         return
     await set_channel_operator(channel_id, operator_id, msg.text.replace('@', ''))
+    await log_action(channel_id, msg.from_user.id, "🛠️ Назначен оператор", operator_id, f"Канал: {channel_id}")
     m = await msg.answer(f"✅ Оператор назначен для канала `{channel_id}`")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2145,6 +2162,7 @@ async def admin_setup_owner_handler(msg: types.Message, state: FSMContext):
         asyncio.create_task(delete_after(m, 10))
         return
     await set_channel_owner(channel_id, owner_id, msg.text.replace('@', ''))
+    await log_action(channel_id, msg.from_user.id, "👑 Назначен глава канала", owner_id, f"Канал: {channel_id}")
     m = await msg.answer(f"👑 Глава назначен для канала `{channel_id}`")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2155,6 +2173,7 @@ async def admin_add_whitelist_handler(msg: types.Message, state: FSMContext):
     domain = re.sub(r'^https?://', '', domain)
     domain = re.sub(r'^www\.', '', domain)
     await add_whitelist_domain(domain, msg.from_user.id)
+    await log_action(msg.chat.id, msg.from_user.id, "➕ Домен в whitelist", None, f"Домен: {domain}")
     m = await msg.answer(f"✅ Домен {domain} добавлен")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
@@ -2165,6 +2184,7 @@ async def admin_remove_whitelist_handler(msg: types.Message, state: FSMContext):
     domain = re.sub(r'^https?://', '', domain)
     domain = re.sub(r'^www\.', '', domain)
     await remove_whitelist_domain(domain)
+    await log_action(msg.chat.id, msg.from_user.id, "➖ Домен из whitelist", None, f"Домен: {domain}")
     m = await msg.answer(f"✅ Домен {domain} удалён")
     asyncio.create_task(delete_after(m, 15))
     await state.clear()
