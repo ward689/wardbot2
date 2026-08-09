@@ -1,15 +1,5 @@
-# Python
 __pycache__/
-*.py[cod]
-
-# SQLite database
+*.pyc
 bot.db
-
-# Environment variables
 .env
-
-# Editor files
-.vscode/
-*.swp
-*~
 .venv/
