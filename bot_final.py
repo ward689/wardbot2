@@ -2192,6 +2192,9 @@ async def admin_remove_whitelist_handler(msg: types.Message, state: FSMContext):
 # ============================================================
 # === ФИЛЬТР СООБЩЕНИЙ ===
 # ============================================================
+# ============================================================
+# === ФИЛЬТР СООБЩЕНИЙ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ===
+# ============================================================
 @dp.message(F.text | F.caption)
 async def filter_msg(msg: types.Message):
     user_id = msg.from_user.id
@@ -2211,12 +2214,13 @@ async def filter_msg(msg: types.Message):
     text = msg.text or msg.caption or ""
     has_photo = bool(msg.photo or msg.video)
 
+    # === 1. ЗАПРЕЩЁННЫЕ СЛОВА (угрозы, насилие, наркота) ===
     found, word = has_forbidden(text)
     if found:
         await msg.delete()
         await add_violation(user_id, msg.chat.id, "forbidden")
         was_auto_muted, mute_duration = await add_warning(user_id, msg.chat.id, f"Запрещёнка 18+: {word}", 0)
-        
+
         target_name = await get_username_by_id(user_id)
         await send_log(
             msg.chat.id,
@@ -2226,7 +2230,7 @@ async def filter_msg(msg: types.Message):
             f"🔍 Найдено слово: `{word}`\n"
             f"⚠️ Варнов: {await get_warnings(user_id, msg.chat.id)}/{settings['warn_limit']}"
         )
-        
+
         if was_auto_muted:
             m = await msg.answer(f"🚫 **ЗАПРЕЩЁНКА 18+!**\n🔒 Автомут на {mute_duration//60} минут!")
         else:
@@ -2235,16 +2239,37 @@ async def filter_msg(msg: types.Message):
         asyncio.create_task(delete_after(m, 15))
         return
 
-    if has_photo and has_bad_words(text):
+    # === 2. МАТ (теперь работает для ЛЮБОГО сообщения) ===
+    if has_bad_words(text):
         await msg.delete()
-        await add_violation(user_id, msg.chat.id, "badwords_with_photo")
-        m = await msg.answer("🚫 Мат с фото запрещён!")
+        await add_violation(user_id, msg.chat.id, "badwords")
+
+        target_name = await get_username_by_id(user_id)
+        await send_log(
+            msg.chat.id,
+            "🤬 Мат в чате",
+            f"👤 Пользователь: {target_name} ({user_id})\n"
+            f"📝 Текст: {text[:100]}...\n"
+            f"{'📸 С фото' if has_photo else '💬 Обычное сообщение'}"
+        )
+
+        m = await msg.answer("🤬 **Мат запрещён!**\nСообщение удалено.")
         asyncio.create_task(delete_after(m, 10))
         return
 
+    # === 3. ЗАПРЕЩЁННЫЕ ССЫЛКИ ===
     if await has_blocked_link(text):
         await msg.delete()
         await add_violation(user_id, msg.chat.id, "blocked_link")
+
+        target_name = await get_username_by_id(user_id)
+        await send_log(
+            msg.chat.id,
+            "🔗 Запрещённая ссылка",
+            f"👤 Пользователь: {target_name} ({user_id})\n"
+            f"📝 Текст: {text[:100]}..."
+        )
+
         m = await msg.answer("🔗 Ссылка заблокирована!")
         asyncio.create_task(delete_after(m, 10))
         return
