@@ -6,6 +6,7 @@ import re
 import aiosqlite
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.fsm.strategy import FSMStrategy
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -17,7 +18,7 @@ from states import AdminStates, AutoResponseStates, RealShopStates
 from aiohttp import web
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.USER_IN_ALL_CHATS)
 
 user_selected_chat = {}
 
