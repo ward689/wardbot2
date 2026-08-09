@@ -12,3 +12,4 @@ bot.db
 .vscode/
 *.swp
 *~
+.venv/

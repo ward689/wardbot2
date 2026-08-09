@@ -1,4 +1,4 @@
-aiogram
-aiosqlite
-aiohttp
-python-dotenv
+aiogram>=3.7,<4
+aiosqlite>=0.20
+aiohttp>=3.9
+python-dotenv>=1.0

@@ -1,19 +1,15 @@
 import asyncio
 import time
 import re
-import random
 import aiosqlite
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-try:
-    from aiogram.fsm.filters import StateFilter
-except ImportError:
-    from aiogram.fsm.state import StateFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery, Message
-from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, WHITELIST_DOMAINS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, TELEGRAM_PROVIDER_TOKEN
+from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, SHOP_CHANNEL_IDS
+import database
 from database import *
 from states import AdminStates, AutoResponseStates
 from aiohttp import web
@@ -30,43 +26,29 @@ async def resolve_user(text: str, chat_id: int = None) -> int:
     text = text.strip()
     try:
         return int(text)
-    except:
+    except ValueError:
         pass
-    if text.startswith("@"):
-        username = text[1:]
-    else:
-        username = text
-    try:
-        user = await bot.get_user(username)
-        if user and user.id:
-            return user.id
-    except:
-        pass
+    username = text[1:] if text.startswith("@") else text
     try:
         chat = await bot.get_chat(f"@{username}")
         if chat and chat.id:
             return chat.id
-    except:
+    except Exception:
         pass
-    if chat_id:
-        try:
-            member = await bot.get_chat_member(chat_id, f"@{username}")
-            if member and member.user:
-                return member.user.id
-        except:
-            pass
     return None
 
 async def get_username_by_id(user_id: int) -> str:
     try:
-        user = await bot.get_user(user_id)
-        if user and user.username:
-            return f"@{user.username}"
-        elif user and user.first_name:
-            return user.first_name
+        chat = await bot.get_chat(user_id)
+        if chat.username:
+            return f"@{chat.username}"
+        if chat.first_name:
+            return chat.first_name
         return str(user_id)
-    except:
+    except Exception:
         return str(user_id)
+
+database.set_username_resolver(get_username_by_id)
 
 async def delete_after(msg, seconds=10):
     await asyncio.sleep(seconds)
@@ -132,7 +114,7 @@ async def has_blocked_link(text: str) -> bool:
         domain = re.sub(r'^https?://', '', link)
         domain = re.sub(r'^www\.', '', domain)
         domain = domain.split('/')[0].split('?')[0].lower()
-        if domain not in whitelist:
+        if not any(domain == allowed or domain.endswith(f".{allowed}") for allowed in whitelist):
             return True
     return False
 
@@ -426,38 +408,20 @@ async def give_money(msg: types.Message):
     
     chat_id = msg.chat.id
     
-    chat = await bot.get_chat(chat_id)
-    if chat.type not in ["group", "supergroup"]:
+    if msg.chat.type not in ["group", "supergroup"]:
         await msg.answer("❌ Только в группах!")
         return
     
     try:
         count = 0
-        try:
-            offset = 0
-            limit = 100
-            while True:
-                members = await bot.get_chat_members(chat_id, offset=offset, limit=limit)
-                if not members:
-                    break
-                for member in members:
-                    try:
-                        await add_karma(member.user.id, amount)
-                        count += 1
-                    except:
-                        pass
-                offset += limit
-                if len(members) < limit:
-                    break
-        except Exception as e:
-            print(f"Ошибка при выдаче участникам: {e}")
-            admins = await bot.get_chat_administrators(chat_id)
-            for admin in admins:
-                try:
-                    await add_karma(admin.user.id, amount)
-                    count += 1
-                except:
-                    pass
+        # Telegram Bot API не позволяет получить всех участников чата,
+        # поэтому монеты выдаются администраторам чата.
+        admins = await bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            if admin.user.is_bot:
+                continue
+            await add_karma(admin.user.id, amount)
+            count += 1
         
         if count == 0:
             await msg.answer("❌ Не удалось выдать монеты! Убедитесь, что бот имеет права администратора.")
@@ -465,7 +429,7 @@ async def give_money(msg: types.Message):
         
         await msg.answer(
             f"💰 **Монеты выданы!**\n\n"
-            f"📌 Каждому участнику выдано: {amount} монет\n"
+            f"📌 Каждому администратору выдано: {amount} монет\n"
             f"👥 Получили: {count} участников\n"
             f"💳 Всего выдано: {amount * count} монет\n\n"
             f"👮 Выдал: {await get_username_by_id(user_id)}"
@@ -583,36 +547,23 @@ async def policy_callback(call: types.CallbackQuery):
 # === КОМАНДА /shop ===
 # ============================================================
 @dp.message(Command("shop"))
-async def shop_cmd(msg: types.Message):
-    user_id = msg.from_user.id
+async def shop_cmd(msg: types.Message, user_id: int = None):
+    user_id = user_id or msg.from_user.id
     user_username = await get_username_by_id(user_id)
     karma = await get_karma(user_id)
     has_sub = await has_subscription(user_id)
     
-    known_chats = [
-        (-1003018474298, "анон чат"),
-        (-1003881455978, "ришон чатик"),
-        (-1003704771166, "анон кармиэль чат"),
-    ]
-    
     chat_buttons = []
-    for chat_id, chat_name in known_chats:
+    for chat_id in SHOP_CHANNEL_IDS:
         try:
             chat = await bot.get_chat(chat_id)
-            if chat:
-                chat_buttons.append([InlineKeyboardButton(
-                    text=f"📢 {chat_name}",
-                    callback_data=f"shop_select_chat_{chat_id}"
-                )])
-        except:
-            pass
-    
-    if not chat_buttons:
-        for chat_id, chat_name in known_chats:
-            chat_buttons.append([InlineKeyboardButton(
-                text=f"📢 {chat_name}",
-                callback_data=f"shop_select_chat_{chat_id}"
-            )])
+            chat_name = chat.title or str(chat_id)
+        except Exception:
+            chat_name = str(chat_id)
+        chat_buttons.append([InlineKeyboardButton(
+            text=f"📢 {chat_name}",
+            callback_data=f"shop_select_chat_{chat_id}"
+        )])
     
     chat_buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")])
     
@@ -652,20 +603,20 @@ async def shop_select_chat(call: types.CallbackQuery):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="━━━ 🪙 За монеты ━━━", callback_data="ignore")],
-        [InlineKeyboardButton(text="🗑️ Снять варн — 500 монет", callback_data="shop_buy_clear_warn")],
-        [InlineKeyboardButton(text="🔓 Снять мут — 1000 монет", callback_data="shop_buy_clear_mute")],
-        [InlineKeyboardButton(text="🔄 Разбан — 2500 монет", callback_data="shop_buy_unban")],
-        [InlineKeyboardButton(text="🔗 Одноразовая ссылка — 150 монет", callback_data="shop_buy_invite")],
+        [InlineKeyboardButton(text=f"🗑️ Снять варн — {COIN_PRICES['clear_warn']} монет", callback_data="shop_buy_clear_warn")],
+        [InlineKeyboardButton(text=f"🔓 Снять мут — {COIN_PRICES['clear_mute']} монет", callback_data="shop_buy_clear_mute")],
+        [InlineKeyboardButton(text=f"🔄 Разбан — {COIN_PRICES['unban']} монет", callback_data="shop_buy_unban")],
+        [InlineKeyboardButton(text=f"🔗 Одноразовая ссылка — {COIN_PRICES['invite']} монет", callback_data="shop_buy_invite")],
         [InlineKeyboardButton(text="━━━ ⭐ За звёзды ━━━", callback_data="ignore")],
-        [InlineKeyboardButton(text="🗑️ Снять варн — 10 ⭐", callback_data="shop_buy_stars_clear_warn")],
-        [InlineKeyboardButton(text="🔓 Снять мут — 20 ⭐", callback_data="shop_buy_stars_clear_mute")],
-        [InlineKeyboardButton(text="🔄 Разбан — 50 ⭐", callback_data="shop_buy_stars_unban")],
+        [InlineKeyboardButton(text=f"🗑️ Снять варн — {STARS_PRICES['clear_warn']} ⭐", callback_data="shop_buy_stars_clear_warn")],
+        [InlineKeyboardButton(text=f"🔓 Снять мут — {STARS_PRICES['clear_mute']} ⭐", callback_data="shop_buy_stars_clear_mute")],
+        [InlineKeyboardButton(text=f"🔄 Разбан — {STARS_PRICES['unban']} ⭐", callback_data="shop_buy_stars_unban")],
         [InlineKeyboardButton(text="━━━ 📦 Подписка ━━━", callback_data="ignore")],
         [InlineKeyboardButton(
-            text=f"{'✅' if has_unlimited else '❌'} Безлимитные ссылки — 2000 монет/мес",
+            text=f"{'✅' if has_unlimited else '❌'} Безлимитные ссылки — {SUBSCRIPTION_PRICE} монет/мес",
             callback_data="shop_buy_subscription"
         )],
-        [InlineKeyboardButton(text="⭐ Безлимитные ссылки — 20 ⭐/мес", callback_data="shop_buy_stars_subscription")],
+        [InlineKeyboardButton(text=f"⭐ Безлимитные ссылки — {SUBSCRIPTION_STARS} ⭐/мес", callback_data="shop_buy_stars_subscription")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="shop_back")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
     ])
@@ -819,7 +770,7 @@ async def shop_buy(call: types.CallbackQuery):
         action_type = action.replace("stars_", "")
         
         if action_type == "clear_warn":
-            stars_needed = STARS_PRICES.get("clear_warn", 10)
+            stars_needed = STARS_PRICES["clear_warn"]
             if stars < stars_needed:
                 await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
                 return
@@ -839,7 +790,7 @@ async def shop_buy(call: types.CallbackQuery):
             return
         
         if action_type == "clear_mute":
-            stars_needed = STARS_PRICES.get("clear_mute", 20)
+            stars_needed = STARS_PRICES["clear_mute"]
             if stars < stars_needed:
                 await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
                 return
@@ -858,7 +809,7 @@ async def shop_buy(call: types.CallbackQuery):
             return
         
         if action_type == "unban":
-            stars_needed = STARS_PRICES.get("unban", 50)
+            stars_needed = STARS_PRICES["unban"]
             if stars < stars_needed:
                 await call.answer(f"❌ Нужно {stars_needed} ⭐!", show_alert=True)
                 return
@@ -927,9 +878,9 @@ async def buy_real_stars_cmd(msg: types.Message):
         chat_name = str(chat_id)
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Снять варн — 10 звёзд", callback_data="real_stars_clear_warn")],
-        [InlineKeyboardButton(text="⭐ Снять мут — 20 звёзд", callback_data="real_stars_clear_mute")],
-        [InlineKeyboardButton(text="⭐ Разбан — 50 звёзд", callback_data="real_stars_unban")],
+        [InlineKeyboardButton(text=f"⭐ Снять варн — {STARS_PRICES['clear_warn']} звёзд", callback_data="real_stars_clear_warn")],
+        [InlineKeyboardButton(text=f"⭐ Снять мут — {STARS_PRICES['clear_mute']} звёзд", callback_data="real_stars_clear_mute")],
+        [InlineKeyboardButton(text=f"⭐ Разбан — {STARS_PRICES['unban']} звёзд", callback_data="real_stars_unban")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="real_stars_close")]
     ])
     
@@ -945,7 +896,7 @@ async def buy_real_stars_cmd(msg: types.Message):
 
 @dp.callback_query(F.data == "go_shop")
 async def go_shop_callback(call: types.CallbackQuery):
-    await shop_cmd(call.message)
+    await shop_cmd(call.message, user_id=call.from_user.id)
     await call.answer()
 
 @dp.callback_query(F.data.startswith("real_stars_"))
@@ -974,20 +925,16 @@ async def real_stars_callback(call: types.CallbackQuery):
             await call.answer("❌ Ты не в муте!", show_alert=True)
             return
     
-    prices = {
-        "clear_warn": {"amount": 10, "label": "Снять варн"},
-        "clear_mute": {"amount": 20, "label": "Снять мут"},
-        "unban": {"amount": 50, "label": "Разбан"},
+    labels = {
+        "clear_warn": "Снять варн",
+        "clear_mute": "Снять мут",
+        "unban": "Разбан",
     }
     
-    price_info = prices.get(action)
-    if not price_info:
+    if action not in labels:
         await call.answer("❌ Неизвестное действие!", show_alert=True)
         return
-
-    if not TELEGRAM_PROVIDER_TOKEN:
-        await call.answer("❌ Провайдер токен не настроен. Добавь TELEGRAM_PROVIDER_TOKEN в .env.", show_alert=True)
-        return
+    price_info = {"amount": STARS_PRICES[action], "label": labels[action]}
 
     try:
         await bot.send_invoice(
@@ -1021,7 +968,8 @@ async def pre_checkout_query_handler(query: PreCheckoutQuery):
 async def successful_payment_handler(msg: Message):
     user_id = msg.from_user.id
     payload = msg.successful_payment.invoice_payload
-    total_amount = msg.successful_payment.total_amount // 100
+    # Для валюты XTR сумма приходит в звёздах, без множителя 100.
+    total_amount = msg.successful_payment.total_amount
     
     parts = payload.split("_")
     if len(parts) >= 3 and parts[0] == "stars":
@@ -1236,16 +1184,12 @@ async def remove_response_keyword_handler(msg: types.Message, state: FSMContext)
     await msg.answer(f"✅ Авто-ответ на `{keyword}` удалён!")
     await state.clear()
 
-# ============================================================
-# === ФИЛЬТР АВТО-ОТВЕТОВ ===
-# ============================================================
-@dp.message(F.text)
-async def auto_response_filter(msg: types.Message):
+async def send_auto_response(msg: types.Message):
     responses = await get_all_auto_responses(msg.chat.id)
     if not responses:
         return
     
-    text = msg.text.lower()
+    text = (msg.text or msg.caption or "").lower()
     for keyword, response, date in responses:
         if keyword in text:
             await msg.answer(response)
@@ -1257,21 +1201,19 @@ async def auto_response_filter(msg: types.Message):
 @dp.message(Command("daily"))
 async def daily_bonus(msg: types.Message):
     user_id = msg.from_user.id
-    can_claim, amount, streak = await get_daily_bonus(user_id)
+    can_claim, amount, streak, remaining = await get_daily_bonus(user_id)
     if can_claim:
         await claim_daily(user_id)
-        await add_karma(user_id, amount // 10)
+        await add_karma(user_id, amount)
         m = await msg.answer(
             f"🎁 **Ежедневный бонус!**\n\n"
             f"💰 Получено: {amount} монет\n"
-            f"🔥 Стрик: {streak} дней\n"
-            f"⭐ Карма +{amount // 10}\n\n"
+            f"🔥 Стрик: {streak} дней\n\n"
             f"Приходи завтра! ☀️",
             parse_mode="Markdown"
         )
         asyncio.create_task(delete_after(m, 30))
     else:
-        remaining = 86400 - (int(time.time()) % 86400)
         hours = remaining // 3600
         minutes = (remaining % 3600) // 60
         m = await msg.answer(
@@ -1427,15 +1369,15 @@ async def cmd_warn(msg: types.Message):
         return
     was_auto_muted, mute_duration = await add_warning(target_id, msg.chat.id, reason, user_id)
     target_name = await get_username_by_id(target_id)
-    await log_admin_action(user_id, "⚠️ Варн", target_id, reason)
     await send_log(msg.chat.id, "⚠️ Варн", f"👤 Пользователь: {target_name} ({target_id})\n📝 Причина: {reason}")
     warns = await get_warnings(target_id, msg.chat.id)
+    settings = await get_channel_settings(msg.chat.id)
     if was_auto_muted:
         await msg.answer(
             f"⚠️ **Варн выдан!**\n\n"
             f"👤 Пользователь: {target_name}\n"
             f"📝 Причина: {reason}\n"
-            f"🔥 Варнов: {warns}/10\n"
+            f"🔥 Варнов: {warns}/{settings['warn_limit']}\n"
             f"🔒 **Автоматический мут на {mute_duration//60} минут!**"
         )
     else:
@@ -1443,7 +1385,7 @@ async def cmd_warn(msg: types.Message):
             f"⚠️ **Варн выдан!**\n\n"
             f"👤 Пользователь: {target_name}\n"
             f"📝 Причина: {reason}\n"
-            f"🔥 Варнов: {warns}/10"
+            f"🔥 Варнов: {warns}/{settings['warn_limit']}"
         )
 
 @dp.message(Command("бан"))
@@ -1699,7 +1641,7 @@ async def handle_callbacks(call: types.CallbackQuery, state: FSMContext):
         return
 
     if data.startswith("sett_"):
-        action = data.split("_")[1]
+        action = data[len("sett_"):]
         chat_id = call.message.chat.id
         settings = await get_channel_settings(chat_id)
         
@@ -1960,12 +1902,11 @@ async def admin_warn_handler(msg: types.Message, state: FSMContext):
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
         return
-    await add_warning(target_id, msg.chat.id, "Нарушение", msg.from_user.id)
+    was_auto_muted, mute_duration = await add_warning(target_id, msg.chat.id, "Нарушение", msg.from_user.id)
     warns = await get_warnings(target_id, msg.chat.id)
     settings = await get_channel_settings(msg.chat.id)
-    if warns >= settings['warn_limit']:
-        await add_mute(target_id, settings['mute_duration'])
-        m = await msg.answer(f"⚠️ {warns} варнов! Мут {settings['mute_duration']//60} мин!")
+    if was_auto_muted:
+        m = await msg.answer(f"⚠️ {warns} варнов! Мут {mute_duration//60} мин!")
     else:
         m = await msg.answer(f"✅ Варн {warns}/{settings['warn_limit']}")
     asyncio.create_task(delete_after(m, 15))
@@ -2174,16 +2115,14 @@ async def admin_remove_whitelist_handler(msg: types.Message, state: FSMContext):
 # ============================================================
 # === ФИЛЬТР СООБЩЕНИЙ ===
 # ============================================================
-@dp.message(F.text)
+@dp.message(F.text | F.caption)
 async def filter_msg(msg: types.Message):
     user_id = msg.from_user.id
     level = await get_user_level(user_id)
 
     settings = await get_channel_settings(msg.chat.id)
-    if not settings['enabled']:
-        return
-
-    if level >= 1:
+    if not settings['enabled'] or level >= 1:
+        await send_auto_response(msg)
         return
 
     if await is_muted(user_id):
@@ -2192,7 +2131,7 @@ async def filter_msg(msg: types.Message):
         asyncio.create_task(delete_after(m, 5))
         return
 
-    text = msg.text or ""
+    text = msg.text or msg.caption or ""
     has_photo = bool(msg.photo or msg.video)
 
     found, word = has_forbidden(text)
@@ -2208,14 +2147,14 @@ async def filter_msg(msg: types.Message):
             f"👤 Пользователь: {target_name} ({user_id})\n"
             f"📝 Текст: {text[:100]}...\n"
             f"🔍 Найдено слово: `{word}`\n"
-            f"⚠️ Варнов: {await get_warnings(user_id, msg.chat.id)}/10"
+            f"⚠️ Варнов: {await get_warnings(user_id, msg.chat.id)}/{settings['warn_limit']}"
         )
         
         if was_auto_muted:
             m = await msg.answer(f"🚫 **ЗАПРЕЩЁНКА 18+!**\n🔒 Автомут на {mute_duration//60} минут!")
         else:
             warns = await get_warnings(user_id, msg.chat.id)
-            m = await msg.answer(f"🚫 **ЗАПРЕЩЁНКА 18+!**\n⚠️ Варн {warns}/10")
+            m = await msg.answer(f"🚫 **ЗАПРЕЩЁНКА 18+!**\n⚠️ Варн {warns}/{settings['warn_limit']}")
         asyncio.create_task(delete_after(m, 15))
         return
 
@@ -2232,6 +2171,8 @@ async def filter_msg(msg: types.Message):
         m = await msg.answer("🔗 Ссылка заблокирована!")
         asyncio.create_task(delete_after(m, 10))
         return
+
+    await send_auto_response(msg)
 
 # ============================================================
 # === КАНАЛЫ ===
@@ -2290,8 +2231,8 @@ async def background_tasks():
             
             async with aiosqlite.connect(DB_NAME) as db:
                 cursor = await db.execute(
-                    "SELECT user_id, until FROM mutes WHERE until <= ? AND until > ?",
-                    (int(time.time()), int(time.time()) - 10)
+                    "SELECT user_id, until FROM mutes WHERE until <= ?",
+                    (int(time.time()),)
                 )
                 expired = await cursor.fetchall()
                 for user_id, _ in expired:
@@ -2307,7 +2248,7 @@ async def background_tasks():
                     await remove_mute(user_id)
         except Exception as e:
             print(f"Ошибка: {e}")
-        await asyncio.sleep(3600)
+        await asyncio.sleep(60)
 
 # ============================================================
 # === ВЕБ-СЕРВЕР ===
@@ -2337,11 +2278,11 @@ async def main():
     print("✅ Бот работает!")
     await dp.start_polling(bot)
 
-async def start():
+async def run_all():
     await asyncio.gather(
         main(),
         start_web()
     )
 
 if __name__ == "__main__":
-    asyncio.run(start())
+    asyncio.run(run_all())
