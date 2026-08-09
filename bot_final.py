@@ -2416,17 +2416,22 @@ async def start_web():
 # ============================================================
 # === REAL SHOP: ОБРАБОТЧИКИ КНОПОК ===
 # ============================================================
-pending_real_purchases = {}  # user_id -> {"item": ..., "data": {...}}
+# ============================================================
+# === REAL SHOP: ВСЁ ЧЕРЕЗ ЛС ===
+# ============================================================
+pending_real_purchases = {}
 
 @dp.callback_query(F.data == "realshop_open")
 async def realshop_open_cb(call: types.CallbackQuery):
-    await call.message.delete()
     await realshop_cmd(call.message)
     await call.answer()
 
 @dp.callback_query(F.data == "realshop_close")
 async def realshop_close_cb(call: types.CallbackQuery):
-    await call.message.delete()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
     await call.answer("Закрыто")
 
 @dp.callback_query(F.data.startswith("real_buy_"))
@@ -2434,37 +2439,46 @@ async def real_buy_cb(call: types.CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     item = call.data.replace("real_buy_", "")
 
-    # Товары, требующие настройки через ЛС
+    # Проверяем, что юзер может получать ЛС
+    try:
+        await bot.send_chat_action(user_id, "typing")
+    except Exception:
+        await call.answer("❗ Сначала нажми /start в ЛС бота — покупки приходят в личные сообщения!", show_alert=True)
+        return
+
+    group_chat_id = call.message.chat.id if call.message.chat.type != "private" else user_id
+
+    # --- Поздравление (настройка в ЛС) ---
     if item == "congratulation":
+        await state.update_data(chat_id=group_chat_id)
         await state.set_state(RealShopStates.congrat_target)
-        await call.message.answer(
+        await bot.send_message(
+            user_id,
             "🎉 **Поздравление в чате**\n\n"
-            "📝 Введи @username кого хочешь поздравить:\n\n"
-            "⚠️ **Важно:** Бот не несёт ответственности, если получатель не написал ему в ЛС. "
-            "Для корректной работы получатель должен первым написать боту /start."
+            "📝 Введи @username кого поздравить:\n\n"
+            "⚠️ Получатель должен был написать боту /start в ЛС, иначе открытка не доставится.",
+            parse_mode="Markdown"
         )
-        await call.answer()
+        await call.answer("📩 Продолжение в ЛС!")
         return
 
+    # --- Подарок монет (настройка в ЛС) ---
     if item == "gift_coins":
+        await state.update_data(chat_id=group_chat_id)
         await state.set_state(RealShopStates.gift_amount)
-        await call.message.answer(
-            "🎁 **Подарить монеты другу**\n\n"
-            "💰 Введи количество монет, которое хочешь подарить:"
-        )
-        await call.answer()
+        await bot.send_message(user_id, "🎁 **Подарок монет**\n\n💰 Введи количество монет:")
+        await call.answer("📩 Продолжение в ЛС!")
         return
 
+    # --- Анонимное послание (настройка в ЛС) ---
     if item == "anonymous_message":
+        await state.update_data(chat_id=group_chat_id)
         await state.set_state(RealShopStates.anon_target)
-        await call.message.answer(
-            "💌 **Анонимное послание**\n\n"
-            "📝 Введи @username кому отправить анонимное послание:"
-        )
-        await call.answer()
+        await bot.send_message(user_id, "💌 **Анонимное послание**\n\n📝 Введи @username получателя:")
+        await call.answer("📩 Продолжение в ЛС!")
         return
 
-    # Обычные товары — сразу на оплату
+    # --- Обычные товары: счёт сразу в ЛС ---
     prices_map = {
         "clear_warn": STARS_PRICES["clear_warn"],
         "clear_mute": STARS_PRICES["clear_mute"],
@@ -2474,54 +2488,51 @@ async def real_buy_cb(call: types.CallbackQuery, state: FSMContext):
         "daily_boost": STARS_PRICES["daily_boost_x3"],
         "unlimited_forever": STARS_PRICES["unlimited_links_forever"],
     }
-
     if item not in prices_map:
         await call.answer("❌ Товар не найден!", show_alert=True)
         return
 
-    price = prices_map[item]
-    pending_real_purchases[user_id] = {"item": item, "chat_id": call.message.chat.id}
+    pending_real_purchases[user_id] = {"item": item, "chat_id": group_chat_id}
+    try:
+        await bot.send_invoice(
+            chat_id=user_id,
+            title=f"⭐ Покупка: {item}",
+            description=f"Цена: {prices_map[item]} звёзд. Активация после оплаты.",
+            payload=f"real_{item}",
+            currency="XTR",
+            prices=[LabeledPrice(label="Оплата", amount=prices_map[item])],
+        )
+        await call.answer("📩 Счёт отправлен в ЛС!")
+    except Exception:
+        await call.answer("❗ Не смог отправить счёт в ЛС — нажми /start у бота!", show_alert=True)
 
-    await call.message.answer_invoice(
-        title=f"Покупка: {item}",
-        description=f"⭐ Цена: {price} звёзд. Услуга активируется после оплаты.",
-        payload=f"real_{item}",
-        currency="XTR",
-        prices=[LabeledPrice(label="Оплата", amount=price)]
-    )
-    await call.answer()
-
-# === FSM: Поздравление ===
+# === FSM: Поздравление (в ЛС) ===
 @dp.message(RealShopStates.congrat_target)
 async def congrat_target_handler(msg: types.Message, state: FSMContext):
-    target = msg.text.strip()
-    await state.update_data(target=target)
+    await state.update_data(target=msg.text.strip())
     await state.set_state(RealShopStates.congrat_text)
     await msg.answer("📝 Теперь введи текст поздравления:")
 
 @dp.message(RealShopStates.congrat_text)
 async def congrat_text_handler(msg: types.Message, state: FSMContext):
-    text = msg.text.strip()
     data = await state.get_data()
     await state.clear()
-
     user_id = msg.from_user.id
     pending_real_purchases[user_id] = {
         "item": "congratulation",
-        "chat_id": msg.chat.id,
+        "chat_id": data.get("chat_id", user_id),
         "target": data.get("target"),
-        "text": text
+        "text": msg.text.strip(),
     }
-
     await msg.answer_invoice(
         title="🎉 Поздравление в чате",
-        description=f"⭐ Цена: {STARS_PRICES['congratulation']} звёзд",
+        description=f"Цена: {STARS_PRICES['congratulation']} ⭐. Отправка после оплаты.",
         payload="real_congratulation",
         currency="XTR",
-        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["congratulation"])]
+        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["congratulation"])],
     )
 
-# === FSM: Подарок монет ===
+# === FSM: Подарок монет (в ЛС) ===
 @dp.message(RealShopStates.gift_amount)
 async def gift_amount_handler(msg: types.Message, state: FSMContext):
     try:
@@ -2530,7 +2541,7 @@ async def gift_amount_handler(msg: types.Message, state: FSMContext):
         await msg.answer("❌ Введи число!")
         return
     if amount <= 0:
-        await msg.answer("❌ Количество должно быть больше 0!")
+        await msg.answer("❌ Число должно быть больше 0!")
         return
     await state.update_data(amount=amount)
     await state.set_state(RealShopStates.gift_target)
@@ -2538,54 +2549,47 @@ async def gift_amount_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(RealShopStates.gift_target)
 async def gift_target_handler(msg: types.Message, state: FSMContext):
-    target = msg.text.strip()
     data = await state.get_data()
     await state.clear()
-
     user_id = msg.from_user.id
     pending_real_purchases[user_id] = {
         "item": "gift_coins",
-        "chat_id": msg.chat.id,
+        "chat_id": data.get("chat_id", user_id),
         "amount": data.get("amount"),
-        "target": target
+        "target": msg.text.strip(),
     }
-
     await msg.answer_invoice(
         title="🎁 Подарить монеты",
-        description=f"⭐ Цена услуги: {STARS_PRICES['gift_coins']} звёзд",
+        description=f"Цена услуги: {STARS_PRICES['gift_coins']} ⭐. Перевод после оплаты.",
         payload="real_gift_coins",
         currency="XTR",
-        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["gift_coins"])]
+        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["gift_coins"])],
     )
 
-# === FSM: Анонимное послание ===
+# === FSM: Анонимное послание (в ЛС) ===
 @dp.message(RealShopStates.anon_target)
 async def anon_target_handler(msg: types.Message, state: FSMContext):
-    target = msg.text.strip()
-    await state.update_data(target=target)
+    await state.update_data(target=msg.text.strip())
     await state.set_state(RealShopStates.anon_text)
     await msg.answer("📝 Теперь введи текст анонимного послания:")
 
 @dp.message(RealShopStates.anon_text)
 async def anon_text_handler(msg: types.Message, state: FSMContext):
-    text = msg.text.strip()
     data = await state.get_data()
     await state.clear()
-
     user_id = msg.from_user.id
     pending_real_purchases[user_id] = {
         "item": "anonymous_message",
-        "chat_id": msg.chat.id,
+        "chat_id": data.get("chat_id", user_id),
         "target": data.get("target"),
-        "text": text
+        "text": msg.text.strip(),
     }
-
     await msg.answer_invoice(
         title="💌 Анонимное послание",
-        description=f"⭐ Цена: {STARS_PRICES['anonymous_message']} звёзд",
+        description=f"Цена: {STARS_PRICES['anonymous_message']} ⭐. Доставка после оплаты.",
         payload="real_anonymous_message",
         currency="XTR",
-        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["anonymous_message"])]
+        prices=[LabeledPrice(label="Оплата", amount=STARS_PRICES["anonymous_message"])],
     )
 
 # ============================================================
