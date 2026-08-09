@@ -131,16 +131,31 @@ def parse_duration(duration_str: str) -> int:
         except:
             return None
 
+def normalize_text(text: str) -> str:
+    """Превращает 'У б И  ть' → 'убить', убирая все хитрости."""
+    t = text.lower()
+    # Заменяем похожие латинские буквы на кириллицу
+    homoglyphs = {
+        'a': 'а', 'e': 'е', 'o': 'о', 'p': 'р', 'c': 'с',
+        'y': 'у', 'x': 'х', 'k': 'к', 'm': 'м', 't': 'т',
+        'h': 'н', 'b': 'б', 'i': 'і', 'u': 'у', 'g': 'д',
+    }
+    for lat, cyr in homoglyphs.items():
+        t = t.replace(lat, cyr)
+    # Оставляем ТОЛЬКО буквы (кириллица + латиница), убираем пробелы, цифры, символы
+    t = re.sub(r'[^а-яё]', '', t)
+    return t
+
+
 def has_forbidden(text: str) -> tuple:
     if not text:
         return False, None
-    t = text.lower()
+    clean = normalize_text(text)
+    if not clean:
+        return False, None
     for word in FORBIDDEN_WORDS:
-        if word in t:
-            return True, word
-    clean = re.sub(r'[.,!?;:\s]+', '', t)
-    for word in FORBIDDEN_WORDS:
-        if re.sub(r'[.,!?;:\s]+', '', word) in clean:
+        word_clean = re.sub(r'[^а-яё]', '', word.lower())
+        if word_clean and word_clean in clean:
             return True, word
     return False, None
 
