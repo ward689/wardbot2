@@ -624,37 +624,67 @@ async def policy_callback(call: types.CallbackQuery):
 # ============================================================
 # === КОМАНДА /shop ===
 # ============================================================
+# ============================================================
+# === КОМАНДА /shop (ТОЛЬКО МОНЕТЫ) ===
+# ============================================================
 @dp.message(Command("shop"))
-async def shop_cmd(msg: types.Message, user_id: int = None):
-    user_id = user_id or msg.from_user.id
+async def shop_cmd(msg: types.Message):
+    user_id = msg.from_user.id
     user_username = await get_username_by_id(user_id)
     karma = await get_karma(user_id)
     has_sub = await has_subscription(user_id)
-    
-    chat_buttons = []
-    for chat_id in SHOP_CHANNEL_IDS:
-        try:
-            chat = await bot.get_chat(chat_id)
-            chat_name = chat.title or str(chat_id)
-        except Exception:
-            chat_name = str(chat_id)
-        chat_buttons.append([InlineKeyboardButton(
-            text=f"📢 {chat_name}",
-            callback_data=f"shop_select_chat_{chat_id}"
-        )])
-    
-    chat_buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=chat_buttons)
-    
-    sub_status = "✅ Активна" if has_sub else "❌ Неактивна"
-    
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="━━━ 🪙 Магазин за монеты ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(text=f"🗑️ Снять варн — {COIN_PRICES['clear_warn']} монет", callback_data="shop_buy_clear_warn")],
+        [InlineKeyboardButton(text=f"🔓 Снять мут — {COIN_PRICES['clear_mute']} монет", callback_data="shop_buy_clear_mute")],
+        [InlineKeyboardButton(text=f"🔄 Разбан — {COIN_PRICES['unban']} монет", callback_data="shop_buy_unban")],
+        [InlineKeyboardButton(text=f"🔗 Одноразовая ссылка — {COIN_PRICES['invite']} монет", callback_data="shop_buy_invite")],
+        [InlineKeyboardButton(text="━━━ 📦 Подписка ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(
+            text=f"{'✅' if has_sub else '❌'} Безлимитные ссылки — {SUBSCRIPTION_PRICE} монет/мес",
+            callback_data="shop_buy_subscription"
+        )],
+        [InlineKeyboardButton(text="━━━ ⭐ Реальные звёзды ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(text="🌟 Перейти в /realshop", callback_data="realshop_open")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close")]
+    ])
+
     await msg.answer(
-        f"🛍️ **Магазин**\n\n"
+        f"🛍️ **Магазин (монеты)**\n\n"
         f"👤 Пользователь: {user_username}\n"
         f"💰 Баланс: {karma} монет\n"
-        f"📦 Подписка: {sub_status}\n\n"
-        f"📌 **Выбери чат, в котором хочешь совершить покупку:**",
+        f"📦 Подписка: {'✅ Активна' if has_sub else '❌ Неактивна'}\n\n"
+        f"📌 За реальными звёздами — команда /realshop",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.message(Command("realshop"))
+async def realshop_cmd(msg: types.Message):
+    user_id = msg.from_user.id
+    user_username = await get_username_by_id(user_id)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="━━━ ⭐ REAL SHOP ━━━", callback_data="ignore")],
+        [InlineKeyboardButton(text=f"🗑️ Снять варн — {STARS_PRICES['clear_warn']} ⭐", callback_data="real_buy_clear_warn")],
+        [InlineKeyboardButton(text=f"🔓 Снять мут — {STARS_PRICES['clear_mute']} ⭐", callback_data="real_buy_clear_mute")],
+        [InlineKeyboardButton(text=f"🔄 Разбан — {STARS_PRICES['unban']} ⭐", callback_data="real_buy_unban")],
+        [InlineKeyboardButton(text=f"⚡ Мгновенный размут — {STARS_PRICES['instant_unmute']} ⭐", callback_data="real_buy_instant_unmute")],
+        [InlineKeyboardButton(text=f"📌 Закреп сообщения — {STARS_PRICES['pin_message']} ⭐", callback_data="real_buy_pin_message")],
+        [InlineKeyboardButton(text=f"🎉 Поздравление в чате — {STARS_PRICES['congratulation']} ⭐", callback_data="real_buy_congratulation")],
+        [InlineKeyboardButton(text=f"🎁 Подарить монеты другу — {STARS_PRICES['gift_coins']} ⭐", callback_data="real_buy_gift_coins")],
+        [InlineKeyboardButton(text=f"💌 Анонимное послание — {STARS_PRICES['anonymous_message']} ⭐", callback_data="real_buy_anonymous_message")],
+        [InlineKeyboardButton(text=f"⏩ Ускоренный /daily x3 — {STARS_PRICES['daily_boost_x3']} ⭐", callback_data="real_buy_daily_boost")],
+        [InlineKeyboardButton(text=f"🔗 Безлимит ссылок навсегда — {STARS_PRICES['unlimited_links_forever']} ⭐", callback_data="real_buy_unlimited_forever")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="realshop_close")]
+    ])
+
+    await msg.answer(
+        f"🌟 **REAL SHOP — за реальные Telegram Stars**\n\n"
+        f"👤 Пользователь: {user_username}\n\n"
+        f"⚠️ Все услуги активируются **только после успешной оплаты**.\n"
+        f"📌 Некоторые услуги требуют переписки с ботом в ЛС.",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
