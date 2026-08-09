@@ -13,7 +13,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, SHOP_CHANNEL_IDS, DAILY_BONUS_MIN, DAILY_BONUS_MAX
 import database
 from database import *
-from states import AdminStates, AutoResponseStates
+from states import AdminStates, AutoResponseStates, RealShopStates
 from aiohttp import web
 
 bot = Bot(token=BOT_TOKEN)
