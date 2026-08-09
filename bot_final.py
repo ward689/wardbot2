@@ -8,7 +8,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery, Message
-from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, SHOP_CHANNEL_IDS
+from config import BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL_ID, DB_NAME, ADMIN_LEVELS, FORBIDDEN_WORDS, BAD_WORDS, COIN_PRICES, STARS_PRICES, SUBSCRIPTION_PRICE, SUBSCRIPTION_STARS, SHOP_CHANNEL_IDS, DAILY_BONUS_MIN, DAILY_BONUS_MAX
 import database
 from database import *
 from states import AdminStates, AutoResponseStates
@@ -575,7 +575,7 @@ async def policy_callback(call: types.CallbackQuery):
         "• Безлимитные ссылки — 2000 монет/мес или 20 ⭐\n\n"
         
         "**5. Получение монет**\n"
-        "🎁 Ежедневный бонус — `/daily`\n"
+        f"🎁 Ежедневный бонус — `/daily` (от {DAILY_BONUS_MIN} до {DAILY_BONUS_MAX} монет)\n"
         "💰 Выдача админом — `/givemoney 1000`\n\n"
         
         "**6. Авто-ответы**\n"
@@ -1262,7 +1262,8 @@ async def daily_bonus(msg: types.Message):
         m = await msg.answer(
             f"🎁 **Ежедневный бонус!**\n\n"
             f"💰 Получено: {amount} монет\n"
-            f"🔥 Стрик: {streak} дней\n\n"
+            f"🔥 Стрик: {streak} дней\n"
+            f"🎲 Каждый день выпадает от {DAILY_BONUS_MIN} до {DAILY_BONUS_MAX} монет\n\n"
             f"Приходи завтра! ☀️",
             parse_mode="Markdown"
         )

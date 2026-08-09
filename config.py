@@ -44,6 +44,11 @@ COIN_PRICES = {
     "invite": 150,
 }
 
+# === ЕЖЕДНЕВНЫЙ БОНУС ===
+DAILY_BONUS_MIN = 200          # минимум монет за /daily
+DAILY_BONUS_MAX = 1000         # максимум монет за /daily
+DAILY_BONUS_STREAK_BONUS = 10  # доплата за каждый день стрика
+
 # === ЦЕНЫ ЗА НАСТОЯЩИЕ TELEGRAM STARS ===
 STARS_PRICES = {
     "clear_warn": 3,

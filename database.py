@@ -1,6 +1,7 @@
 import aiosqlite
+import random
 import time
-from config import ADMIN_IDS, DB_NAME
+from config import ADMIN_IDS, DAILY_BONUS_MAX, DAILY_BONUS_MIN, DAILY_BONUS_STREAK_BONUS, DB_NAME
 
 _username_resolver = None
 
@@ -434,11 +435,12 @@ async def get_daily_bonus(user_id: int) -> tuple:
         now = int(time.time())
         day = 86400
         if not result:
-            return True, 100, 1, 0
+            return True, random.randint(DAILY_BONUS_MIN, DAILY_BONUS_MAX), 1, 0
         last_claim, streak = result
         elapsed = now - last_claim
         if elapsed >= day:
-            return True, 100 + (streak * 10), streak + 1, 0
+            amount = random.randint(DAILY_BONUS_MIN, DAILY_BONUS_MAX) + streak * DAILY_BONUS_STREAK_BONUS
+            return True, amount, streak + 1, 0
         return False, 0, streak, day - elapsed
 
 async def claim_daily(user_id: int):
