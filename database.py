@@ -143,6 +143,16 @@ async def init_db():
         """)
         
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_seen INTEGER
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
+        
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 user_id INTEGER PRIMARY KEY,
                 until INTEGER,
@@ -157,6 +167,38 @@ async def init_db():
         for domain in WHITELIST_DOMAINS:
             await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, 0))
         await db.commit()
+
+# === ПОЛЬЗОВАТЕЛИ ===
+async def remember_user(user_id: int, username: str = None, first_name: str = None):
+    """Кэширует связку @username → user_id: Bot API не умеет искать людей по юзернейму."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO users (user_id, username, first_name, last_seen) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "username = excluded.username, first_name = excluded.first_name, last_seen = excluded.last_seen",
+            (user_id, (username or "").lower() or None, first_name, int(time.time()))
+        )
+        await db.commit()
+
+async def get_user_id_by_username(username: str):
+    username = username.lstrip("@").lower()
+    if not username:
+        return None
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        result = await cursor.fetchone()
+        return result[0] if result else None
+
+async def get_cached_username(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT username, first_name FROM users WHERE user_id = ?", (user_id,))
+        result = await cursor.fetchone()
+        if not result:
+            return None
+        username, first_name = result
+        if username:
+            return f"@{username}"
+        return first_name or None
 
 # === ВАРНЫ ===
 async def add_warning(user_id, chat_id, reason, admin_id=0):

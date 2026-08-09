@@ -19,6 +19,31 @@ dp = Dispatcher(storage=MemoryStorage())
 
 user_selected_chat = {}
 
+
+@dp.update.outer_middleware()
+async def remember_users_middleware(handler, event, data):
+    """Запоминает всех, кого видит бот, чтобы потом искать их по @username."""
+    msg = event.message or event.edited_message
+    users = []
+    if msg:
+        users.append(msg.from_user)
+        if msg.reply_to_message:
+            users.append(msg.reply_to_message.from_user)
+        users.extend(msg.new_chat_members or [])
+        for entity in (msg.entities or []) + (msg.caption_entities or []):
+            if entity.user:
+                users.append(entity.user)
+    elif event.callback_query:
+        users.append(event.callback_query.from_user)
+
+    for user in users:
+        if user and not user.is_bot:
+            try:
+                await remember_user(user.id, user.username, user.first_name)
+            except Exception as e:
+                print(f"Ошибка кэша пользователя: {e}")
+    return await handler(event, data)
+
 # ============================================================
 # === УНИВЕРСАЛЬНЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ===
 # ============================================================
@@ -29,6 +54,10 @@ async def resolve_user(text: str, chat_id: int = None) -> int:
     except ValueError:
         pass
     username = text[1:] if text.startswith("@") else text
+    # Bot API не умеет искать людей по @username, поэтому сначала смотрим в свой кэш.
+    cached_id = await get_user_id_by_username(username)
+    if cached_id:
+        return cached_id
     try:
         chat = await bot.get_chat(f"@{username}")
         if chat and chat.id:
@@ -37,6 +66,23 @@ async def resolve_user(text: str, chat_id: int = None) -> int:
         pass
     return None
 
+async def resolve_target(msg: types.Message, text: str = None) -> int:
+    """Цель команды: ответ на сообщение, упоминание без @username, или текстовый аргумент."""
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        return msg.reply_to_message.from_user.id
+    for entity in (msg.entities or []):
+        if entity.user:
+            return entity.user.id
+    if not text:
+        return None
+    return await resolve_user(text, msg.chat.id)
+
+USER_NOT_FOUND_HINT = (
+    "❌ Пользователь {target} не найден!\n"
+    "💡 Telegram не позволяет ботам искать по @username — бот запоминает только тех, кто писал в чате после его добавления.\n"
+    "Ответьте командой на сообщение пользователя или укажите его ID."
+)
+
 async def get_username_by_id(user_id: int) -> str:
     try:
         chat = await bot.get_chat(user_id)
@@ -44,9 +90,9 @@ async def get_username_by_id(user_id: int) -> str:
             return f"@{chat.username}"
         if chat.first_name:
             return chat.first_name
-        return str(user_id)
     except Exception:
-        return str(user_id)
+        pass
+    return await get_cached_username(user_id) or str(user_id)
 
 database.set_username_resolver(get_username_by_id)
 
@@ -163,9 +209,9 @@ async def get_admin_keyboard(user_id: int):
 @dp.message(Command("id"))
 async def get_user_id(msg: types.Message):
     args = msg.text.split()
-    if len(args) >= 2:
-        target = args[1]
-        target_id = await resolve_user(target, msg.chat.id)
+    if len(args) >= 2 or msg.reply_to_message:
+        target = args[1] if len(args) >= 2 else ""
+        target_id = await resolve_target(msg, target)
         if target_id:
             username = await get_username_by_id(target_id)
             await msg.answer(
@@ -175,7 +221,7 @@ async def get_user_id(msg: types.Message):
                 parse_mode="Markdown"
             )
             return
-        await msg.answer(f"❌ Пользователь {target} не найден!\n💡 Используйте @userinfobot")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     if msg.reply_to_message:
         user = msg.reply_to_message.from_user
@@ -297,9 +343,9 @@ async def give_admin(msg: types.Message):
         await msg.answer("❌ Уровень должен быть от 0 до 4!")
         return
     
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     
     target_level = await get_user_level(target_id)
@@ -1294,9 +1340,9 @@ async def cmd_mute(msg: types.Message):
     target = args[1]
     duration_str = args[2] if len(args) > 2 else "5м"
     reason = args[3] if len(args) > 3 else "Нарушение"
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     duration = parse_duration(duration_str)
     if not duration:
@@ -1331,9 +1377,9 @@ async def cmd_unmute(msg: types.Message):
         await msg.answer("📝 /размут @user")
         return
     target = args[1]
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     await remove_mute(target_id)
     target_name = await get_username_by_id(target_id)
@@ -1359,9 +1405,9 @@ async def cmd_warn(msg: types.Message):
         return
     target = args[1]
     reason = args[2] if len(args) > 2 else "Нарушение"
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     target_level = await get_user_level(target_id)
     if target_level >= level:
@@ -1402,9 +1448,9 @@ async def cmd_ban(msg: types.Message):
         return
     target = args[1]
     reason = args[2] if len(args) > 2 else "Бан"
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     target_level = await get_user_level(target_id)
     if target_level >= level:
@@ -1436,9 +1482,9 @@ async def cmd_kick(msg: types.Message):
         return
     target = args[1]
     reason = args[2] if len(args) > 2 else "Кик"
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     target_level = await get_user_level(target_id)
     if target_level >= level:
@@ -1469,9 +1515,9 @@ async def cmd_clear(msg: types.Message):
         await msg.answer("📝 /очистить @user")
         return
     target = args[1]
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     await clear_warnings(target_id, msg.chat.id)
     target_name = await get_username_by_id(target_id)
@@ -1496,9 +1542,9 @@ async def cmd_info(msg: types.Message):
         await msg.answer("📝 /инфо @user")
         return
     target = args[1]
-    target_id = await resolve_user(target, msg.chat.id)
+    target_id = await resolve_target(msg, target)
     if not target_id:
-        await msg.answer(f"❌ Пользователь {target} не найден!")
+        await msg.answer(USER_NOT_FOUND_HINT.format(target=target))
         return
     stats = await get_user_stats(target_id, msg.chat.id)
     username = await get_username_by_id(target_id)
@@ -1865,9 +1911,9 @@ async def set_warn_limit_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.user_stats))
 async def admin_user_stats_handler(msg: types.Message, state: FSMContext):
-    target_id = await resolve_user(msg.text.strip(), msg.chat.id)
+    target_id = await resolve_target(msg, msg.text.strip())
     if not target_id:
-        m = await msg.answer("❌ Пользователь не найден!")
+        m = await msg.answer(USER_NOT_FOUND_HINT.format(target=msg.text.strip()))
         asyncio.create_task(delete_after(m, 10))
         return
     stats = await get_user_stats(target_id, msg.chat.id)
@@ -1892,12 +1938,12 @@ async def admin_user_stats_handler(msg: types.Message, state: FSMContext):
     asyncio.create_task(delete_after(m, 45))
     await state.clear()
 
-async def _resolve_target_from_text(text: str, chat_id: int):
-    return await resolve_user(text.strip(), chat_id)
+async def _resolve_target_from_text(msg: types.Message, chat_id: int = None):
+    return await resolve_target(msg, (msg.text or "").strip())
 
 @dp.message(StateFilter(AdminStates.warn))
 async def admin_warn_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -1914,7 +1960,7 @@ async def admin_warn_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.check_warns))
 async def admin_check_warns_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -1926,7 +1972,7 @@ async def admin_check_warns_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.clear_warns))
 async def admin_clear_warns_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -1938,7 +1984,7 @@ async def admin_clear_warns_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.mute))
 async def admin_mute_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -1965,7 +2011,7 @@ async def admin_mute_duration_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.unmute))
 async def admin_unmute_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -1977,7 +2023,7 @@ async def admin_unmute_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.set_moderator))
 async def admin_set_moderator_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -1989,7 +2035,7 @@ async def admin_set_moderator_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.set_admin))
 async def admin_set_admin_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
@@ -2001,7 +2047,7 @@ async def admin_set_admin_handler(msg: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(AdminStates.set_level))
 async def admin_set_level_handler(msg: types.Message, state: FSMContext):
-    target_id = await _resolve_target_from_text(msg.text, msg.chat.id)
+    target_id = await _resolve_target_from_text(msg)
     if not target_id:
         m = await msg.answer("❌ Пользователь не найден!")
         asyncio.create_task(delete_after(m, 10))
