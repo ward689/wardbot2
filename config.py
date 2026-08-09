@@ -54,6 +54,13 @@ STARS_PRICES = {
     "clear_warn": 3,
     "clear_mute": 15,
     "unban": 20,
+    "pin_message": 20,
+    "unlimited_links_forever": 100,
+    "congratulation": 12,
+    "gift_coins": 5,
+    "daily_boost_x3": 20,
+    "anonymous_message": 3,
+    "instant_unmute": 10,
 }
 
 # === ПАКЕТЫ ВНУТРЕННИХ ЗВЁЗД ЗА МОНЕТЫ ===
