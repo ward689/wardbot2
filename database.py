@@ -1,7 +1,14 @@
 import aiosqlite
 import time
-import random
 from config import ADMIN_IDS, DB_NAME
+
+_username_resolver = None
+
+
+def set_username_resolver(resolver):
+    """Позволяет боту подставить функцию получения имени через свой экземпляр Bot."""
+    global _username_resolver
+    _username_resolver = resolver
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -148,10 +155,7 @@ async def init_db():
     from config import WHITELIST_DOMAINS
     async with aiosqlite.connect(DB_NAME) as db:
         for domain in WHITELIST_DOMAINS:
-            try:
-                await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, 0))
-            except:
-                pass
+            await db.execute("INSERT OR IGNORE INTO whitelist (domain, added_by) VALUES (?, ?)", (domain, 0))
         await db.commit()
 
 # === ВАРНЫ ===
@@ -164,7 +168,7 @@ async def add_warning(user_id, chat_id, reason, admin_id=0):
     settings = await get_channel_settings(chat_id)
     warns = await get_warnings(user_id, chat_id)
     if warns >= settings["warn_limit"]:
-        mute_duration = random.randint(300, 1800)
+        mute_duration = settings["mute_duration"]
         await add_mute(user_id, mute_duration)
         return True, mute_duration
     return False, 0
@@ -227,34 +231,6 @@ async def get_user_level(user_id: int) -> int:
         result = await cursor.fetchone()
         return result[0] if result else 0
 
-async def claim_daily(user_id: int):
-    now = int(time.time())
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
-        row = await cursor.fetchone()
-        if row:
-            last_claim, streak = row
-            elapsed = now - last_claim
-            if elapsed >= 86400:
-                if elapsed < 172800:
-                    streak += 1
-                else:
-                    streak = 1
-            else:
-                return streak
-            await db.execute(
-                "INSERT OR REPLACE INTO daily_bonus (user_id, last_claim, streak) VALUES (?, ?, ?)",
-                (user_id, now, streak)
-            )
-        else:
-            streak = 1
-            await db.execute(
-                "INSERT INTO daily_bonus (user_id, last_claim, streak) VALUES (?, ?, ?)",
-                (user_id, now, streak)
-            )
-        await db.commit()
-        return streak
-
 async def get_user_role(user_id: int) -> str:
     level = await get_user_level(user_id)
     from config import ADMIN_LEVELS
@@ -272,17 +248,11 @@ async def is_super_admin(user_id: int) -> bool:
     return await get_user_level(user_id) >= 4
 
 async def get_username_by_id_safe(user_id: int) -> str:
-    try:
-        from aiogram import Bot
-        from config import BOT_TOKEN
-        bot = Bot(token=BOT_TOKEN)
-        user = await bot.get_user(user_id)
-        if user and user.username:
-            return f"@{user.username}"
-        elif user and user.first_name:
-            return user.first_name
+    if _username_resolver is None:
         return str(user_id)
-    except:
+    try:
+        return await _username_resolver(user_id)
+    except Exception:
         return str(user_id)
 
 async def log_admin_action(admin_id: int, action: str, target_id: int = None, details: str = ""):
@@ -319,7 +289,11 @@ async def get_admin_logs_by_user(user_id: int, limit: int = 50):
 # === КАРМА ===
 async def add_karma(user_id: int, amount: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT OR REPLACE INTO karma (user_id, karma) VALUES (?, COALESCE((SELECT karma FROM karma WHERE user_id = ?), 0) + ?)", (user_id, user_id, amount))
+        await db.execute(
+            "INSERT INTO karma (user_id, karma) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET karma = karma + excluded.karma",
+            (user_id, amount)
+        )
         await db.commit()
 
 async def get_karma(user_id: int) -> int:
@@ -338,8 +312,9 @@ async def get_user_stars(user_id: int) -> int:
 async def add_stars(user_id: int, amount: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
-            "INSERT OR REPLACE INTO stars (user_id, stars) VALUES (?, COALESCE((SELECT stars FROM stars WHERE user_id = ?), 0) + ?)",
-            (user_id, user_id, amount)
+            "INSERT INTO stars (user_id, stars) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET stars = stars + excluded.stars",
+            (user_id, amount)
         )
         await db.commit()
 
@@ -403,11 +378,22 @@ async def get_daily_bonus(user_id: int) -> tuple:
 
 async def claim_daily(user_id: int):
     now = int(time.time())
+    day = 86400
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT streak FROM daily_bonus WHERE user_id = ?", (user_id,))
-        result = await cursor.fetchone()
-        streak = (result[0] + 1) if result else 1
-        await db.execute("INSERT OR REPLACE INTO daily_bonus (user_id, last_claim, streak) VALUES (?, ?, ?)", (user_id, now, streak))
+        cursor = await db.execute("SELECT last_claim, streak FROM daily_bonus WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        if row:
+            last_claim, streak = row
+            elapsed = now - last_claim
+            if elapsed < day:
+                return streak
+            streak = streak + 1 if elapsed < 2 * day else 1
+        else:
+            streak = 1
+        await db.execute(
+            "INSERT OR REPLACE INTO daily_bonus (user_id, last_claim, streak) VALUES (?, ?, ?)",
+            (user_id, now, streak)
+        )
         await db.commit()
     return streak
 
