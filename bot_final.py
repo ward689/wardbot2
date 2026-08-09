@@ -1,4 +1,6 @@
 import asyncio
+import os
+import signal
 import time
 import re
 import aiosqlite
@@ -2316,7 +2318,7 @@ async def start_web():
     app.router.add_get('/', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 10000)
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 10000)))
     await site.start()
     print("✅ Веб-сервер запущен")
     await asyncio.Event().wait()
@@ -2331,13 +2333,34 @@ async def main():
     asyncio.create_task(background_tasks())
     await bot.delete_webhook(drop_pending_updates=True)
     print("✅ Бот работает!")
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, handle_signals=False)
 
 async def run_all():
+    # Хостинг гасит старый контейнер через SIGTERM: без этого polling продолжает
+    # держать getUpdates и новый инстанс получает Conflict.
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
+        except NotImplementedError:
+            pass
+    
     await asyncio.gather(
         main(),
         start_web()
     )
 
+async def shutdown():
+    print("🛑 Остановка бота...")
+    try:
+        await dp.stop_polling()
+    except RuntimeError:
+        pass
+    await bot.session.close()
+    asyncio.get_running_loop().stop()
+
 if __name__ == "__main__":
-    asyncio.run(run_all())
+    try:
+        asyncio.run(run_all())
+    except (KeyboardInterrupt, RuntimeError):
+        pass
